@@ -1,0 +1,4 @@
+{
+  "buildCommand": "npm run build --prefix backend || true",
+  "outputDirectory": "dist"
+}
