@@ -1,10 +1,23 @@
-// =============================================================
-// BACKEND GEMINI SERVICE STUB
-// =============================================================
-// The backend does NOT call Gemini directly.
-// All AI generation happens on the frontend via the Gemini SDK.
-// This file exists only to prevent import errors if any legacy
-// code references it.
-// =============================================================
+// GEMINI SERVICE STUB
+// Frontend handles actual Gemini API calls.
+// This stub satisfies backend imports.
 
-export {};
+export class GeminiService {
+  static async getVoiceChatConfig() {
+    return {
+      model: process.env.GEMINI_MODEL || 'gemini-1.5-flash',
+      language: 'en-US',
+      voice: 'default',
+    };
+  }
+
+  static async generateText(prompt: string) {
+    return { success: true, text: '' };
+  }
+
+  static async analyzeImage(imageBase64: string, prompt: string) {
+    return { success: true, text: '' };
+  }
+}
+
+export default GeminiService;
