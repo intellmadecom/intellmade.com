@@ -1,0 +1,8 @@
+{
+  "name": "Intellmade.com",
+  "description": "A comprehensive creative platform featuring video generation, image animation, video understanding, image analysis, and general AI intelligence, powered by the latest Gemini and Veo models.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}

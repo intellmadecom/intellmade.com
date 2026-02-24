@@ -1,0 +1,9 @@
+User-agent: *
+Allow: /
+
+# Block API and backend routes from indexing
+Disallow: /api/
+Disallow: /backend/
+
+# Sitemap location
+Sitemap: https://intellmade.com/sitemap.xml
