@@ -9,8 +9,9 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from './AuthContext';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000';
-
+const API_URL = import.meta.env.VITE_SUPABASE_URL 
+  ? `${import.meta.env.VITE_SUPABASE_URL}/functions/v1`
+  : 'http://localhost:4000';
 const Pricing: React.FC = () => {
   const { isLoggedIn, requireAuth } = useAuth();
   const [loadingPlan, setLoadingPlan] = useState<string | null>(null);
@@ -41,7 +42,7 @@ const Pricing: React.FC = () => {
     try {
       setPaymentMessage('Verifying your payment...');
       const token = localStorage.getItem('access_token');
-      const response = await fetch(`${API_URL}/api/payments/verify-payment`, {
+      const response = await fetch(`${API_URL}/payments-verify`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -142,7 +143,7 @@ const Pricing: React.FC = () => {
     try {
       setLoadingPlan(planId);
       const token = localStorage.getItem('access_token');
-      const response = await fetch(`${API_URL}/api/payments/checkout`, {
+      const response = await fetch(`${API_URL}/payments-checkout`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -169,7 +170,7 @@ const Pricing: React.FC = () => {
     try {
       setLoadingPlan('flex');
       const token = localStorage.getItem('access_token');
-      const response = await fetch(`${API_URL}/api/payments/checkout`, {
+      const response = await fetch(`${API_URL}/payments-checkout`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
