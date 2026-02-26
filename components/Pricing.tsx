@@ -14,8 +14,8 @@ const API_URL = import.meta.env.VITE_SUPABASE_URL
   ? `${import.meta.env.VITE_SUPABASE_URL}/functions/v1`
   : 'http://localhost:4000';
 
-const CHECKOUT_URL  = `${API_URL}/create-checkout`;
-const VERIFY_URL    = `${API_URL}/verify-payment`;
+const CHECKOUT_URL  = `${API_URL}/payments-checkout`;
+const VERIFY_URL    = `${API_URL}/payments-verify`;
 
 const Pricing: React.FC = () => {
   const { isLoggedIn, requireAuth, user, refreshCredits } = useAuth(); // ✅ pull user + refreshCredits
