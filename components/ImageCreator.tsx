@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { GeminiService } from '../services/gemini';
 import { useAuth } from './AuthContext';
 
@@ -21,9 +21,23 @@ interface ImageCreatorProps {
 const ImageCreator: React.FC<ImageCreatorProps> = ({ state, setState, onAnimateRequest }) => {
   const { prompt, image, subjectSlots, aspectRatio } = state;
   const [loading, setLoading] = useState(false);
-  const { requireAuth } = useAuth();
-  
+  const { requireAuth, isLoggedIn, pendingAction, setPendingAction } = useAuth();
   const abortControllerRef = useRef<AbortController | null>(null);
+
+  // ✅ After magic link sign-in, if pendingAction was 'download', auto-trigger download
+  useEffect(() => {
+    if (isLoggedIn && pendingAction === 'download' && image) {
+      triggerDownload(image);
+      setPendingAction(null);
+    }
+  }, [isLoggedIn, pendingAction, image]);
+
+  const triggerDownload = (src: string) => {
+    const link = document.createElement('a');
+    link.href = src;
+    link.download = 'intellmade-vision.png';
+    link.click();
+  };
 
   const handleGenerate = async () => {
     if (!prompt.trim()) return;
@@ -35,13 +49,12 @@ const ImageCreator: React.FC<ImageCreatorProps> = ({ state, setState, onAnimateR
       const references = subjectSlots
         .filter(slot => slot !== null)
         .map(slot => slot!.split(',')[1]);
-      
-      let finalPrompt = `SCENE: ${prompt}. `;
 
+      let finalPrompt = `SCENE: ${prompt}. `;
       if (references.length > 0) {
         finalPrompt += `STRICT VISUAL REPLICATION: Replicate the subject from the provided references exactly. Maintain style consistency. `;
       }
-        
+
       const url = await GeminiService.generateImage(finalPrompt, aspectRatio, references);
       if (!abortControllerRef.current.signal.aborted) {
         setState(prev => ({ ...prev, image: url }));
@@ -54,12 +67,10 @@ const ImageCreator: React.FC<ImageCreatorProps> = ({ state, setState, onAnimateR
   };
 
   const handleDownload = () => {
+    // ✅ requireAuth saves 'download' as pendingAction — restored after sign-in
     if (!requireAuth('download')) return;
     if (!image) return;
-    const link = document.createElement('a');
-    link.href = image;
-    link.download = 'intellmade-vision.png';
-    link.click();
+    triggerDownload(image);
   };
 
   const assignToSlot = (img: string, index: number) => {
@@ -109,11 +120,11 @@ const ImageCreator: React.FC<ImageCreatorProps> = ({ state, setState, onAnimateR
 
           <div className="space-y-2">
             <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Prompt</label>
-            <textarea 
-              value={prompt} 
-              onChange={e => setState(prev => ({ ...prev, prompt: e.target.value }))} 
-              placeholder="e.g. A cyberpunk nomad standing in neon rain..." 
-              className="w-full bg-black/40 border border-white/5 rounded-2xl p-4 text-xs text-white focus:outline-none focus:border-indigo-500 h-40 resize-none leading-relaxed" 
+            <textarea
+              value={prompt}
+              onChange={e => setState(prev => ({ ...prev, prompt: e.target.value }))}
+              placeholder="e.g. A cyberpunk nomad standing in neon rain..."
+              className="w-full bg-black/40 border border-white/5 rounded-2xl p-4 text-xs text-white focus:outline-none focus:border-indigo-500 h-40 resize-none leading-relaxed"
             />
           </div>
 
@@ -128,7 +139,11 @@ const ImageCreator: React.FC<ImageCreatorProps> = ({ state, setState, onAnimateR
             </div>
           </div>
 
-          <button onClick={handleGenerate} disabled={loading} className={`w-full py-5 rounded-2xl font-black text-[11px] transition-all flex items-center justify-center space-x-2 uppercase tracking-[0.2em] mt-auto ${loading ? 'bg-gray-800 text-gray-600' : 'bg-indigo-600 text-white shadow-xl shadow-indigo-900/40 hover:scale-[1.02] active:scale-95'}`}>
+          <button
+            onClick={handleGenerate}
+            disabled={loading}
+            className={`w-full py-5 rounded-2xl font-black text-[11px] transition-all flex items-center justify-center space-x-2 uppercase tracking-[0.2em] mt-auto ${loading ? 'bg-gray-800 text-gray-600' : 'bg-indigo-600 text-white shadow-xl shadow-indigo-900/40 hover:scale-[1.02] active:scale-95'}`}
+          >
             {loading ? <i className="fas fa-spinner animate-spin"></i> : <i className="fas fa-wand-magic-sparkles"></i>}
             <span>{loading ? 'Synthesizing...' : (image ? 'Regenerate Art' : 'Generate Art')}</span>
           </button>
@@ -138,9 +153,9 @@ const ImageCreator: React.FC<ImageCreatorProps> = ({ state, setState, onAnimateR
       {/* Main Canvas Column */}
       <div className="flex-1 glass rounded-[3rem] bg-black/40 flex flex-col overflow-hidden border-white/5 relative">
         <div className="flex-1 flex items-center justify-center p-8 md:p-12 lg:p-16">
-          <div 
+          <div
             className="relative shadow-[0_0_100px_rgba(79,70,229,0.15)] transition-all duration-700 ease-in-out bg-[#050505] flex items-center justify-center overflow-hidden border border-white/5"
-            style={{ 
+            style={{
               aspectRatio: getCanvasAspectRatio(),
               maxHeight: '100%',
               maxWidth: '100%',
@@ -153,26 +168,30 @@ const ImageCreator: React.FC<ImageCreatorProps> = ({ state, setState, onAnimateR
                 <img src={image} className="w-full h-full object-contain" />
                 <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-all flex flex-col items-center justify-center gap-4">
                   <div className="flex gap-3">
-                    <button 
-                      onClick={() => assignToSlot(image, subjectSlots.findIndex(s => s === null) !== -1 ? subjectSlots.findIndex(s => s === null) : 0)} 
+                    <button
+                      onClick={() => assignToSlot(image, subjectSlots.findIndex(s => s === null) !== -1 ? subjectSlots.findIndex(s => s === null) : 0)}
                       className="w-12 h-12 rounded-full bg-indigo-600 text-white flex items-center justify-center shadow-2xl hover:scale-110 transition-transform"
                       title="Add to Character Memory"
                     >
                       <i className="fas fa-plus"></i>
                     </button>
-                    <button 
-                      onClick={() => onAnimateRequest?.(image.split(',')[1])} 
+                    <button
+                      onClick={() => onAnimateRequest?.(image.split(',')[1])}
                       className="px-6 py-3 rounded-full bg-blue-500 text-white text-[10px] font-black uppercase tracking-widest shadow-2xl hover:scale-110 transition-transform"
                     >
                       <i className="fas fa-film mr-2"></i> Animate
                     </button>
-                    <button 
+                    <button
                       onClick={handleDownload}
                       className="w-12 h-12 rounded-full bg-white text-black flex items-center justify-center shadow-2xl hover:scale-110 transition-transform cursor-pointer"
+                      title={isLoggedIn ? 'Download' : 'Sign in to download'}
                     >
-                      <i className="fas fa-download"></i>
+                      <i className={`fas ${isLoggedIn ? 'fa-download' : 'fa-lock'}`}></i>
                     </button>
                   </div>
+                  {!isLoggedIn && (
+                    <p className="text-[9px] text-gray-400 uppercase tracking-widest">Sign in to download</p>
+                  )}
                 </div>
               </div>
             ) : (

@@ -18,52 +18,126 @@ import Sidebar from './components/Sidebar';
 import AuthModal from './components/AuthModal';
 import { GeminiService } from './services/gemini';
 
-const SESSION_DURATION_MS = 6 * 60 * 60 * 1000;
-const SESSION_KEY = 'intellmade_session_start';
+const SESSION_DURATION_MS = 3 * 60 * 60 * 1000; // 3 hours
+const SESSION_KEY         = 'intellmade_session_start';
+const STATE_KEY           = 'intellmade_workspace';   // ✅ persisted workspace
 const LOW_CREDITS_THRESHOLD = 20;
 
+// ── Helpers ────────────────────────────────────────────────────────────────
+const saveWorkspace = (data: object) => {
+  try {
+    sessionStorage.setItem(STATE_KEY, JSON.stringify({ ...data, _savedAt: Date.now() }));
+  } catch { /* storage full — ignore */ }
+};
+
+const loadWorkspace = () => {
+  try {
+    const raw = sessionStorage.getItem(STATE_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    // Discard if older than session duration
+    if (Date.now() - (data._savedAt || 0) > SESSION_DURATION_MS) {
+      sessionStorage.removeItem(STATE_KEY);
+      return null;
+    }
+    return data;
+  } catch { return null; }
+};
+
+// ── Default states ─────────────────────────────────────────────────────────
+const defaultImageCreator = {
+  prompt: '',
+  image: null as string | null,
+  subjectSlots: [null, null, null, null, null] as (string | null)[],
+  aspectRatio: '1:1',
+};
+
+const defaultAnimator = {
+  file: null as File | Blob | null,
+  preview: null as string | null,
+  bgFile: null as File | null,
+  bgPreview: null as string | null,
+  prompt: '',
+  aspectRatio: '16:9' as '16:9' | '9:16',
+  resultVideo: null as string | null,
+};
+
+// ── AppInner ───────────────────────────────────────────────────────────────
 const AppInner: React.FC = () => {
   const { user, credits } = useAuth();
-  const [currentTool, setCurrentTool] = useState<ToolType>(ToolType.LANDING);
-  const [hasApiKey, setHasApiKey] = useState(false);
-  const [isSidebarVisible, setIsSidebarVisible] = useState(true);
-  const [showLowCreditsUpgrade, setShowLowCreditsUpgrade] = useState(false);
 
-  const [sessionWarning, setSessionWarning] = useState<'soon' | 'expired' | null>(null);
-  const [timeLeft, setTimeLeft] = useState('');
+  // ── Restore workspace from sessionStorage on mount (survives magic link redirect) ──
+  const saved = loadWorkspace();
+
+  const [currentTool, setCurrentTool] = useState<ToolType>(
+    (saved?.currentTool as ToolType) || ToolType.LANDING
+  );
+  const [hasApiKey,           setHasApiKey]           = useState(false);
+  const [isSidebarVisible,    setIsSidebarVisible]    = useState(true);
+  const [showLowCreditsUpgrade, setShowLowCreditsUpgrade] = useState(false);
+  const [sessionWarning,      setSessionWarning]      = useState<'soon' | 'expired' | null>(null);
+  const [timeLeft,            setTimeLeft]            = useState('');
   const sessionTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const [imageCreatorState, setImageCreatorState] = useState({
-    prompt: '',
-    image: null as string | null,
-    subjectSlots: [null, null, null, null, null] as (string | null)[],
-    aspectRatio: '1:1'
+  // ── Restore image creator state (images survive page reload) ──────────────
+  const [imageCreatorState, setImageCreatorStateRaw] = useState({
+    ...defaultImageCreator,
+    prompt:       saved?.imageCreator?.prompt       ?? defaultImageCreator.prompt,
+    image:        saved?.imageCreator?.image        ?? defaultImageCreator.image,
+    subjectSlots: saved?.imageCreator?.subjectSlots ?? defaultImageCreator.subjectSlots,
+    aspectRatio:  saved?.imageCreator?.aspectRatio  ?? defaultImageCreator.aspectRatio,
   });
 
-  const [animatorState, setAnimatorState] = useState({
-    file: null as File | Blob | null,
-    preview: null as string | null,
-    bgFile: null as File | null,
-    bgPreview: null as string | null,
-    prompt: '',
-    aspectRatio: '16:9' as '16:9' | '9:16',
-    resultVideo: null as string | null
+  // ── Animator can't restore File objects, but restores preview URLs ─────────
+  const [animatorState, setAnimatorStateRaw] = useState({
+    ...defaultAnimator,
+    preview:     saved?.animator?.preview     ?? defaultAnimator.preview,
+    bgPreview:   saved?.animator?.bgPreview   ?? defaultAnimator.bgPreview,
+    prompt:      saved?.animator?.prompt      ?? defaultAnimator.prompt,
+    aspectRatio: saved?.animator?.aspectRatio ?? defaultAnimator.aspectRatio,
+    resultVideo: saved?.animator?.resultVideo ?? defaultAnimator.resultVideo,
   });
 
-  // ── Show low credits upgrade modal when credits drop below threshold ──────
+  // ── Wrap setters to auto-save to sessionStorage ────────────────────────────
+  const setImageCreatorState: typeof setImageCreatorStateRaw = (update) => {
+    setImageCreatorStateRaw(prev => {
+      const next = typeof update === 'function' ? update(prev) : update;
+      saveWorkspace({ currentTool, imageCreator: next, animator: animatorState });
+      return next;
+    });
+  };
+
+  const setAnimatorState: typeof setAnimatorStateRaw = (update) => {
+    setAnimatorStateRaw(prev => {
+      const next = typeof update === 'function' ? update(prev) : update;
+      saveWorkspace({ currentTool, imageCreator: imageCreatorState, animator: next });
+      return next;
+    });
+  };
+
+  // Save currentTool changes too
+  const handleToolSelect = (tool: ToolType) => {
+    if (tool === ToolType.PRICING && currentTool !== ToolType.PRICING) {
+      sessionStorage.setItem('pre_stripe_tool', currentTool);
+    }
+    setCurrentTool(tool);
+    saveWorkspace({ currentTool: tool, imageCreator: imageCreatorState, animator: animatorState });
+  };
+
+  // ── Low credits popup ──────────────────────────────────────────────────────
   useEffect(() => {
     if (
-      user &&                                        // logged in
-      credits !== null &&                            // credits loaded
-      credits <= LOW_CREDITS_THRESHOLD &&            // low balance
-      credits > 0 &&                                 // still has some (not zero)
-      currentTool !== ToolType.PRICING               // not already on pricing
+      user &&
+      credits !== null &&
+      credits <= LOW_CREDITS_THRESHOLD &&
+      credits > 0 &&
+      currentTool !== ToolType.PRICING
     ) {
       setShowLowCreditsUpgrade(true);
     }
   }, [credits, user]);
 
-  // ── Session timer ──────────────────────────────────────────────────────
+  // ── Session timer (3 hrs) ──────────────────────────────────────────────────
   const startSessionTimer = () => {
     if (!sessionStorage.getItem(SESSION_KEY)) {
       sessionStorage.setItem(SESSION_KEY, Date.now().toString());
@@ -71,13 +145,13 @@ const AppInner: React.FC = () => {
     if (sessionTimerRef.current) clearInterval(sessionTimerRef.current);
 
     sessionTimerRef.current = setInterval(() => {
-      const start = parseInt(sessionStorage.getItem(SESSION_KEY) || '0');
-      const elapsed = Date.now() - start;
+      const start     = parseInt(sessionStorage.getItem(SESSION_KEY) || '0');
+      const elapsed   = Date.now() - start;
       const remaining = SESSION_DURATION_MS - elapsed;
 
       if (remaining <= 0) {
         setSessionWarning('expired');
-        clearWorkspace();
+        clearWorkspaceAndStorage();
         clearInterval(sessionTimerRef.current!);
         setTimeLeft('');
       } else if (remaining <= 15 * 60 * 1000) {
@@ -90,10 +164,11 @@ const AppInner: React.FC = () => {
     }, 30000);
   };
 
-  const clearWorkspace = () => {
-    setImageCreatorState({ prompt: '', image: null, subjectSlots: [null,null,null,null,null], aspectRatio: '1:1' });
-    setAnimatorState({ file: null, preview: null, bgFile: null, bgPreview: null, prompt: '', aspectRatio: '16:9', resultVideo: null });
+  const clearWorkspaceAndStorage = () => {
+    setImageCreatorStateRaw(defaultImageCreator);
+    setAnimatorStateRaw(defaultAnimator);
     sessionStorage.removeItem(SESSION_KEY);
+    sessionStorage.removeItem(STATE_KEY);
     setCurrentTool(ToolType.LANDING);
   };
 
@@ -104,6 +179,7 @@ const AppInner: React.FC = () => {
     return () => { if (sessionTimerRef.current) clearInterval(sessionTimerRef.current); };
   }, []);
 
+  // ── Stripe return ──────────────────────────────────────────────────────────
   const handleStripeReturn = () => {
     const searchParams = new URLSearchParams(window.location.search);
     const hashParams   = new URLSearchParams(window.location.hash.split('?')[1] || '');
@@ -122,13 +198,6 @@ const AppInner: React.FC = () => {
     }
   };
 
-  const handleToolSelect = (tool: ToolType) => {
-    if (tool === ToolType.PRICING && currentTool !== ToolType.PRICING) {
-      sessionStorage.setItem('pre_stripe_tool', currentTool);
-    }
-    setCurrentTool(tool);
-  };
-
   const checkKey = async () => {
     const status = await GeminiService.checkApiKey();
     setHasApiKey(status);
@@ -139,13 +208,13 @@ const AppInner: React.FC = () => {
     setHasApiKey(true);
   };
 
-  const toggleSidebar = () => setIsSidebarVisible(!isSidebarVisible);
+  const toggleSidebar = () => setIsSidebarVisible(v => !v);
 
   const handleAnimateSharedImage = (base64: string) => {
     const dataUrl = `data:image/png;base64,${base64}`;
-    fetch(dataUrl).then(res => res.blob()).then(blob => {
+    fetch(dataUrl).then(r => r.blob()).then(blob => {
       setAnimatorState(prev => ({ ...prev, file: blob, preview: dataUrl, resultVideo: null }));
-      setCurrentTool(ToolType.ANIMATE_IMAGE);
+      handleToolSelect(ToolType.ANIMATE_IMAGE);
     });
   };
 
@@ -153,18 +222,17 @@ const AppInner: React.FC = () => {
 
   return (
     <div className="flex min-h-screen bg-gray-950 overflow-hidden">
+
       {/* ── Low credits upgrade overlay ── */}
       {showLowCreditsUpgrade && (
         <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="w-full max-w-5xl max-h-[90vh] overflow-y-auto rounded-[3rem] bg-gray-950 border border-white/10">
-            <Pricing
-              lowCreditsMode={true}
-              onClose={() => setShowLowCreditsUpgrade(false)}
-            />
+            <Pricing lowCreditsMode onClose={() => setShowLowCreditsUpgrade(false)} />
           </div>
         </div>
       )}
 
+      {/* ── Sidebar ── */}
       <div className={`fixed lg:sticky top-0 h-screen z-40 transition-transform duration-300 ease-in-out ${isSidebarVisible ? 'translate-x-0' : '-translate-x-full lg:hidden'}`}>
         <Sidebar
           active={currentTool}
@@ -176,20 +244,15 @@ const AppInner: React.FC = () => {
       </div>
 
       <div className="flex-1 flex flex-col min-w-0 h-screen overflow-hidden">
+
         {/* ── Header ── */}
         <header className="sticky top-0 z-30 h-16 flex items-center justify-between glass border-b border-white/5 shrink-0 px-4 md:px-6">
           <div className="flex items-center gap-4">
-            <button
-              onClick={toggleSidebar}
-              className="hover:bg-white/10 transition-colors text-gray-400 w-10 h-10 rounded-xl flex items-center justify-center z-50"
-            >
+            <button onClick={toggleSidebar} className="hover:bg-white/10 transition-colors text-gray-400 w-10 h-10 rounded-xl flex items-center justify-center z-50">
               <i className="fas fa-bars"></i>
             </button>
             {currentTool !== ToolType.LANDING && (
-              <button
-                onClick={() => setCurrentTool(ToolType.LANDING)}
-                className="flex items-center gap-2 text-gray-400 hover:text-white transition-colors"
-              >
+              <button onClick={() => handleToolSelect(ToolType.LANDING)} className="flex items-center gap-2 text-gray-400 hover:text-white transition-colors">
                 <i className="fas fa-house text-xs"></i>
                 <span className="text-xs font-bold uppercase tracking-widest hidden sm:inline">Home</span>
               </button>
@@ -222,7 +285,7 @@ const AppInner: React.FC = () => {
               </button>
             )}
 
-            {/* ── Credits + email badge ── */}
+            {/* ── Credits + email OR guest CTA ── */}
             {user ? (
               <div className="flex items-center gap-2">
                 <div
@@ -239,7 +302,7 @@ const AppInner: React.FC = () => {
                     {credits ?? 100} CR
                   </span>
                   {credits !== null && credits <= LOW_CREDITS_THRESHOLD && (
-                    <span className="text-[8px] text-red-400 font-black">LOW</span>
+                    <span className="text-[8px] text-red-400 font-black ml-0.5">LOW</span>
                   )}
                 </div>
                 <div className="flex items-center gap-1.5 bg-white/5 border border-white/10 px-2.5 py-1.5 rounded-xl max-w-[140px]">
@@ -248,7 +311,6 @@ const AppInner: React.FC = () => {
                 </div>
               </div>
             ) : (
-              // Guest — show "Get 100 Free Credits" CTA
               <button
                 onClick={() => handleToolSelect(ToolType.PRICING)}
                 className="flex items-center gap-2 bg-purple-500/10 border border-purple-500/30 px-3 py-1.5 rounded-xl text-[10px] font-black text-purple-300 uppercase tracking-widest hover:bg-purple-500/20 transition-all"
@@ -274,7 +336,11 @@ const AppInner: React.FC = () => {
           {hasApiKey ? (
             <>
               <div style={{ display: show(ToolType.IMAGE_GEN) ? 'block' : 'none' }}>
-                <ImageCreator state={imageCreatorState} setState={setImageCreatorState} onAnimateRequest={handleAnimateSharedImage} />
+                <ImageCreator
+                  state={imageCreatorState}
+                  setState={setImageCreatorState}
+                  onAnimateRequest={handleAnimateSharedImage}
+                />
               </div>
               <div style={{ display: show(ToolType.ANIMATE_IMAGE) ? 'block' : 'none' }}>
                 <VeoImageAnimator state={animatorState} setState={setAnimatorState} />
