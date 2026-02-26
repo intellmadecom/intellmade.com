@@ -14,8 +14,8 @@ import { useAuth } from './AuthContext';
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 
-const CHECKOUT_URL = `${SUPABASE_URL}/functions/v1/create-checkout`;
-const VERIFY_URL   = `${SUPABASE_URL}/functions/v1/verify-payment`;
+const CHECKOUT_URL = `${SUPABASE_URL}/functions/v1/payments-checkout`;
+const VERIFY_URL   = `${SUPABASE_URL}/functions/v1/payments-verify`;
 
 // ── Low credits threshold ──────────────────────────────────────────────────
 const LOW_CREDITS_THRESHOLD = 20;
