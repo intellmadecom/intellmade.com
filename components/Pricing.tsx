@@ -2,38 +2,44 @@
 // PRICING PAGE — Credit-based system (one-time payments)
 // =============================================================
 // After Stripe checkout, user returns here.
-// Pricing.tsx calls /api/payments/verify-payment to add credits.
+// Pricing.tsx calls /functions/v1/verify-payment to add credits.
 // Credits STACK: 100 free + 600 personal = 700 total.
 // =============================================================
 
 import React, { useState, useEffect } from 'react';
 import { useAuth } from './AuthContext';
 
-const API_URL = import.meta.env.VITE_SUPABASE_URL 
+// ✅ FIXED: correct Supabase function names (match your deployed edge function folder names)
+const API_URL = import.meta.env.VITE_SUPABASE_URL
   ? `${import.meta.env.VITE_SUPABASE_URL}/functions/v1`
   : 'http://localhost:4000';
+
+const CHECKOUT_URL  = `${API_URL}/create-checkout`;
+const VERIFY_URL    = `${API_URL}/verify-payment`;
+
 const Pricing: React.FC = () => {
-  const { isLoggedIn, requireAuth } = useAuth();
+  const { isLoggedIn, requireAuth, user, refreshCredits } = useAuth(); // ✅ pull user + refreshCredits
   const [loadingPlan, setLoadingPlan] = useState<string | null>(null);
   const [paymentMessage, setPaymentMessage] = useState<string | null>(null);
-  const [updatedCredits, setUpdatedCredits] = useState<number | null>(null);
 
   useEffect(() => {
+    // ✅ FIXED: read from window.location.search (params are before # now)
     const urlParams = new URLSearchParams(window.location.search);
-    const payment = urlParams.get('payment');
-    const plan = urlParams.get('plan');
+    const payment   = urlParams.get('payment');
+    const plan      = urlParams.get('plan');
     const sessionId = urlParams.get('session_id');
 
     if (payment === 'success' && plan && sessionId) {
       verifyAndAddCredits(sessionId, plan);
+      // Clean URL after a short delay
       setTimeout(() => {
-        window.history.replaceState(null, '', window.location.pathname + '#pricing');
+        window.history.replaceState(null, '', window.location.pathname + window.location.hash.split('?')[0]);
       }, 1000);
     } else if (payment === 'canceled') {
       setPaymentMessage('Payment was canceled. No charges were made.');
       setTimeout(() => {
         setPaymentMessage(null);
-        window.history.replaceState(null, '', window.location.pathname + '#pricing');
+        window.history.replaceState(null, '', window.location.pathname + window.location.hash.split('?')[0]);
       }, 4000);
     }
   }, []);
@@ -42,25 +48,36 @@ const Pricing: React.FC = () => {
     try {
       setPaymentMessage('Verifying your payment...');
       const token = localStorage.getItem('access_token');
-      const response = await fetch(`${API_URL}/payments-verify`, {
+
+      const response = await fetch(VERIFY_URL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY || '', // ✅ required by Supabase edge functions
           'Authorization': `Bearer ${token}`,
         },
         body: JSON.stringify({ sessionId }),
       });
+
       const data = await response.json();
+
       if (data.success) {
-        const creditsAdded = data.data.added || 0;
-        const totalCredits = data.data.credits || 0;
+        const creditsAdded  = data.data.added    || 0;
+        const totalCredits  = data.data.credits  || 0;
+
         if (data.data.alreadyCredited) {
           setPaymentMessage(`Payment already processed! You have ${totalCredits} credits.`);
         } else {
           setPaymentMessage(`Payment successful! +${creditsAdded} credits added. Total: ${totalCredits} credits.`);
         }
-        setUpdatedCredits(totalCredits);
-        window.dispatchEvent(new CustomEvent('credits-updated', { detail: { credits: totalCredits, plan: data.data.plan } }));
+
+        // ✅ Refresh the credits badge in the header via AuthContext
+        await refreshCredits();
+
+        // Also fire legacy event for any other listeners
+        window.dispatchEvent(new CustomEvent('credits-updated', {
+          detail: { credits: totalCredits, plan: data.data.plan }
+        }));
       } else {
         setPaymentMessage(data.error || 'Failed to verify payment. Please contact support.');
       }
@@ -68,7 +85,48 @@ const Pricing: React.FC = () => {
       console.error('Verify payment error:', error);
       setPaymentMessage('Failed to verify payment. Your credits will be added shortly.');
     }
+
     setTimeout(() => setPaymentMessage(null), 8000);
+  };
+
+  // ✅ Unified checkout handler — no duplication
+  const startCheckout = async (planId: string) => {
+    if (!requireAuth(planId)) return;
+    if (planId === 'free') {
+      alert('You already have 100 free credits! Go try the tools.');
+      return;
+    }
+
+    try {
+      setLoadingPlan(planId);
+      const token = localStorage.getItem('access_token');
+
+      const response = await fetch(CHECKOUT_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY || '', // ✅ required by Supabase
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          plan: planId,
+          email: user?.email, // ✅ pre-fills Stripe checkout form
+        }),
+      });
+
+      const data = await response.json();
+
+      if (data.success && data.data?.checkoutUrl) {
+        window.location.href = data.data.checkoutUrl;
+      } else {
+        alert(data.error || 'Failed to start checkout. Please try again.');
+      }
+    } catch (error) {
+      console.error('Checkout error:', error);
+      alert('Something went wrong. Please check your connection and try again.');
+    } finally {
+      setLoadingPlan(null);
+    }
   };
 
   const pricingTiers = [
@@ -134,73 +192,15 @@ const Pricing: React.FC = () => {
     }
   ];
 
-  const handleSelectPlan = async (planId: string) => {
-    if (!requireAuth(planId)) return;
-    if (planId === 'free') {
-      alert('You already have 100 free credits! Go try the tools.');
-      return;
-    }
-    try {
-      setLoadingPlan(planId);
-      const token = localStorage.getItem('access_token');
-      const response = await fetch(`${API_URL}/payments-checkout`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({ plan: planId }),
-      });
-      const data = await response.json();
-      if (data.success && data.data?.checkoutUrl) {
-        window.location.href = data.data.checkoutUrl;
-      } else {
-        alert(data.error || 'Failed to start checkout. Please try again.');
-      }
-    } catch (error) {
-      console.error('Checkout error:', error);
-      alert('Something went wrong. Please check your connection and try again.');
-    } finally {
-      setLoadingPlan(null);
-    }
-  };
-
-  const handleBuyFlex = async () => {
-    if (!requireAuth('flex')) return;
-    try {
-      setLoadingPlan('flex');
-      const token = localStorage.getItem('access_token');
-      const response = await fetch(`${API_URL}/payments-checkout`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({ plan: 'flex' }),
-      });
-      const data = await response.json();
-      if (data.success && data.data?.checkoutUrl) {
-        window.location.href = data.data.checkoutUrl;
-      } else {
-        alert(data.error || 'Failed to start checkout. Please try again.');
-      }
-    } catch (error) {
-      console.error('Flex purchase error:', error);
-      alert('Something went wrong. Please try again.');
-    } finally {
-      setLoadingPlan(null);
-    }
-  };
-
   return (
     <div className="max-w-7xl mx-auto px-4 py-4 animate-fadeIn">
-      {/* Payment message */}
+      {/* Payment status message */}
       {paymentMessage && (
         <div className={`mb-6 p-4 rounded-2xl text-center font-bold text-sm ${
           paymentMessage.includes('successful') || paymentMessage.includes('added') || paymentMessage.includes('processed')
             ? 'bg-green-500/20 border border-green-500/40 text-green-400'
             : paymentMessage.includes('Verifying')
-            ? 'bg-blue-500/20 border border-blue-500/40 text-blue-400'
+            ? 'bg-blue-500/20 border border-blue-500/40 text-blue-400 animate-pulse'
             : 'bg-red-500/20 border border-red-500/40 text-red-400'
         }`}>
           {paymentMessage}
@@ -209,7 +209,9 @@ const Pricing: React.FC = () => {
 
       <div className="text-center mb-10">
         <h2 className="text-4xl md:text-5xl font-outfit font-extrabold mb-3 tracking-tight">Choice of Power</h2>
-        <p className="text-gray-400 text-sm max-w-xl mx-auto uppercase tracking-widest font-black opacity-60">Scalable intelligence for the global production house.</p>
+        <p className="text-gray-400 text-sm max-w-xl mx-auto uppercase tracking-widest font-black opacity-60">
+          Scalable intelligence for the global production house.
+        </p>
       </div>
 
       {/* 4 Pricing Cards */}
@@ -246,12 +248,12 @@ const Pricing: React.FC = () => {
             </ul>
 
             <button
-              onClick={() => handleSelectPlan(tier.planId)}
+              onClick={() => startCheckout(tier.planId)}
               disabled={loadingPlan === tier.planId}
               className={`w-full py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all cursor-pointer ${
                 tier.featured
-                ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-xl shadow-purple-900/30 hover:brightness-110 active:scale-95'
-                : 'bg-white/5 hover:bg-white/10 text-white border border-white/10'
+                  ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-xl shadow-purple-900/30 hover:brightness-110 active:scale-95'
+                  : 'bg-white/5 hover:bg-white/10 text-white border border-white/10'
               } ${loadingPlan === tier.planId ? 'opacity-50 cursor-wait' : ''}`}
             >
               {loadingPlan === tier.planId ? 'Processing...' : tier.button}
@@ -270,8 +272,12 @@ const Pricing: React.FC = () => {
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-500 text-[10px] font-black uppercase tracking-widest mb-1">
               On-Demand Power
             </div>
-            <h3 className="text-4xl font-outfit font-black text-white tracking-tighter">Flex Credit <span className="text-amber-500">$10</span></h3>
-            <p className="text-gray-400 text-[11px] max-w-[280px] font-bold uppercase tracking-tight opacity-70">Instant activation for high-spike production needs.</p>
+            <h3 className="text-4xl font-outfit font-black text-white tracking-tighter">
+              Flex Credit <span className="text-amber-500">$10</span>
+            </h3>
+            <p className="text-gray-400 text-[11px] max-w-[280px] font-bold uppercase tracking-tight opacity-70">
+              Instant activation for high-spike production needs.
+            </p>
           </div>
 
           <div className="flex-1 w-full max-w-lg">
@@ -292,7 +298,7 @@ const Pricing: React.FC = () => {
 
           <div className="shrink-0 w-full lg:w-auto">
             <button
-              onClick={handleBuyFlex}
+              onClick={() => startCheckout('flex')}
               disabled={loadingPlan === 'flex'}
               className={`w-full lg:w-auto px-10 py-5 bg-amber-500 hover:bg-amber-400 text-black rounded-3xl font-black text-xs uppercase tracking-[0.2em] transition-all shadow-2xl shadow-amber-900/30 active:scale-95 flex items-center justify-center gap-3 cursor-pointer ${
                 loadingPlan === 'flex' ? 'opacity-50 cursor-wait' : ''
