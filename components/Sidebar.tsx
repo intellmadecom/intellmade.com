@@ -1,4 +1,10 @@
-import React, { useState, useEffect, useCallback } from 'react';
+// =============================================================
+// SIDEBAR — Navigation + Credits Display
+// Credits come from AuthContext (already fetched via get-credits edge function)
+// No separate API call needed here
+// =============================================================
+
+import React from 'react';
 import { ToolType } from '../types';
 import { useAuth } from './AuthContext';
 
@@ -7,251 +13,127 @@ interface SidebarProps {
   onSelect: (tool: ToolType) => void;
 }
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000';
-
-// Credit costs per action (must match types/index.ts TOOL_CREDIT_COSTS)
-const COSTS = {
-  image:  5,
-  video:  10,
-  chat:   1,
-  voice:  2,
-  edit:   3,
-};
+const NAV_ITEMS = [
+  { tool: ToolType.LANDING,           icon: 'fa-house',         label: 'HOME' },
+  { tool: ToolType.VOICE_CHAT,        icon: 'fa-microphone',    label: 'LIVE VOICE STUDIO' },
+  { tool: ToolType.IMAGE_GEN,         icon: 'fa-palette',       label: 'IMAGE GENERATOR' },
+  { tool: ToolType.IMAGE_EDITOR,      icon: 'fa-pen-nib',       label: 'NANO EDITOR' },
+  { tool: ToolType.PROMPT_VIDEO,      icon: 'fa-video',         label: 'VIDEO GENERATOR' },
+  { tool: ToolType.ANIMATE_IMAGE,     icon: 'fa-film',          label: 'PHOTO ANIMATOR' },
+  { tool: ToolType.IMAGE_CLONER,      icon: 'fa-clone',         label: 'AI CLONE STUDIO' },
+  { tool: ToolType.GENERAL_INTEL,     icon: 'fa-brain',         label: 'AI ASSISTANT' },
+  { tool: ToolType.VIDEO_ORACLE,      icon: 'fa-magnifying-glass', label: 'VIDEO INSIGHTS' },
+  { tool: ToolType.IMAGE_ANALYZER,    icon: 'fa-camera',        label: 'IMAGE ANALYSIS' },
+  { tool: ToolType.AUDIO_TRANSCRIBER, icon: 'fa-waveform-lines', label: 'SPEECH LOGIC' },
+  { tool: ToolType.PRICING,           icon: 'fa-tag',           label: 'PRICING' },
+];
 
 const Sidebar: React.FC<SidebarProps> = ({ active, onSelect }) => {
-  const { user, isLoggedIn, signOut, setShowAuthModal } = useAuth();
-  const [credits, setCredits] = useState<number | null>(null);
-  const [plan, setPlan] = useState<string>('FREE');
-  const [showBreakdown, setShowBreakdown] = useState(false);
-
-  const fetchCredits = useCallback(async () => {
-    try {
-      const token = localStorage.getItem('access_token');
-      if (!token) return;
-      const res = await fetch(`${API_URL}/api/payments/credits`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await res.json();
-      if (data.success) {
-        setCredits(data.data.credits ?? 0);
-        setPlan((data.data.plan ?? 'free').toUpperCase());
-      }
-    } catch (err) {
-      console.error('Failed to fetch credits:', err);
-    }
-  }, []);
-
-  // Fetch credits when isLoggedIn changes
-  useEffect(() => {
-    if (isLoggedIn) fetchCredits();
-    else { setCredits(null); setPlan('FREE'); }
-  }, [isLoggedIn, fetchCredits]);
-
-  // Fallback: listen for access_token being written to localStorage
-  // This catches magic link redirects where isLoggedIn may already be true
-  // but fetchCredits ran before the token was available
-  useEffect(() => {
-    const handleStorage = (e: StorageEvent) => {
-      if (e.key === 'access_token' && e.newValue) {
-        fetchCredits();
-      }
-    };
-    // Also try fetching on mount in case token already exists
-    const token = localStorage.getItem('access_token');
-    if (token) fetchCredits();
-
-    window.addEventListener('storage', handleStorage);
-    return () => window.removeEventListener('storage', handleStorage);
-  }, [fetchCredits]);
-
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const detail = (e as CustomEvent).detail;
-      if (detail?.credits !== undefined) setCredits(detail.credits);
-      if (detail?.plan) setPlan(detail.plan.toUpperCase());
-    };
-    window.addEventListener('credits-updated', handler);
-    return () => window.removeEventListener('credits-updated', handler);
-  }, []);
-
-  const menuItems = [
-    { id: ToolType.LANDING,           label: 'Home',              icon: 'fa-house' },
-    { id: ToolType.VOICE_CHAT,        label: 'Live Voice Studio', icon: 'fa-microphone-lines' },
-    { id: ToolType.IMAGE_GEN,         label: 'Image Generator',   icon: 'fa-palette' },
-    { id: ToolType.IMAGE_EDITOR,      label: 'Nano Editor',       icon: 'fa-wand-sparkles' },
-    { id: ToolType.PROMPT_VIDEO,      label: 'Video Generator',   icon: 'fa-wand-magic-sparkles' },
-    { id: ToolType.ANIMATE_IMAGE,     label: 'Photo Animator',    icon: 'fa-film' },
-    { id: ToolType.IMAGE_CLONER,      label: 'AI Clone Studio',   icon: 'fa-dna' },
-    { id: ToolType.GENERAL_INTEL,     label: 'AI Assistant',      icon: 'fa-brain' },
-    { id: ToolType.VIDEO_ORACLE,      label: 'Video Insights',    icon: 'fa-magnifying-glass-chart' },
-    { id: ToolType.IMAGE_ANALYZER,    label: 'Image Analysis',    icon: 'fa-camera-retro' },
-    { id: ToolType.AUDIO_TRANSCRIBER, label: 'Speech Logic',      icon: 'fa-file-audio' },
-    { id: ToolType.PRICING,           label: 'Pricing',           icon: 'fa-tag' },
-  ];
-
-  const c = credits ?? 0;
-  const planMax: Record<string, number> = {
-    FREE: 100, PERSONAL: 700, CREATOR: 1800, STUDIO: 5000, FLEX: 100
-  };
-  const maxCredits = planMax[plan] || 100;
-  const creditPct = Math.min((c / maxCredits) * 100, 100);
-  const creditColor = creditPct > 50 ? 'bg-blue-500' : creditPct > 20 ? 'bg-amber-500' : 'bg-red-500';
-  // Low credits = below 10% of plan max OR not enough for cheapest action (1 credit)
-  const lowThreshold = Math.max(Math.floor(maxCredits * 0.10), 1);
-  const lowCredits = credits !== null && isLoggedIn && c <= lowThreshold;
-
-  // Dynamic breakdown
-  const breakdown = [
-    { label: 'Images',  icon: 'fa-image',        val: Math.floor(c / 12), cost: 12 },
-    { label: 'Videos',  icon: 'fa-film',          val: Math.floor(c / 45), cost: 45 },
-    { label: 'Edits',   icon: 'fa-wand-sparkles', val: Math.floor(c / 8),  cost: 8  },
-    { label: 'Chats',   icon: 'fa-brain',         val: Math.floor(c / 2),  cost: 2  },
-    { label: 'Voice',   icon: 'fa-microphone',    val: Math.floor(c / 2),  cost: 2  },
-  ];
+  const { user, credits, isLoggedIn, setShowAuthModal, signOut } = useAuth();
 
   return (
-    <aside className="flex flex-col w-64 glass h-full border-r border-white/5 bg-gray-950/90 shadow-2xl">
+    <div className="w-64 h-full flex flex-col bg-gray-950 border-r border-white/5 overflow-hidden">
 
-      <div className="p-6 shrink-0">
-        <h2 className="text-xl font-outfit font-black tracking-tighter text-white">INTELLMADE</h2>
+      {/* Logo */}
+      <div className="px-6 py-5 border-b border-white/5 shrink-0">
+        <span className="text-sm font-black tracking-[0.3em] text-white uppercase">INTELLMADE</span>
       </div>
 
-      <nav className="flex-1 px-3 space-y-0.5 overflow-y-auto internal-scroll pb-6">
-        {menuItems.map((item) => (
+      {/* Nav */}
+      <nav className="flex-1 overflow-y-auto py-3 internal-scroll">
+        {NAV_ITEMS.map(({ tool, icon, label }) => (
           <button
-            key={item.id}
-            onClick={() => onSelect(item.id)}
-            className={`w-full flex items-center space-x-3 px-4 py-2.5 rounded-xl transition-all duration-200 group ${
-              active === item.id
-                ? 'bg-blue-600/20 text-blue-400 border border-blue-500/20'
-                : 'hover:bg-white/5 text-gray-500 hover:text-gray-200'
+            key={tool}
+            onClick={() => onSelect(tool)}
+            className={`w-full flex items-center gap-3 px-5 py-3 text-left transition-all group ${
+              active === tool
+                ? 'bg-blue-600/15 text-white border-r-2 border-blue-500'
+                : 'text-gray-500 hover:text-gray-300 hover:bg-white/3'
             }`}
           >
-            <i className={`fas ${item.icon} text-sm w-5 text-center`}></i>
-            <span className="font-semibold text-[10px] uppercase tracking-widest leading-tight text-left">
-              {item.label}
-            </span>
+            <i className={`fas ${icon} text-[11px] w-4 text-center ${active === tool ? 'text-blue-400' : 'text-gray-600 group-hover:text-gray-400'}`}></i>
+            <span className="text-[10px] font-black tracking-widest uppercase">{label}</span>
           </button>
         ))}
       </nav>
 
-      <div className="p-4 border-t border-white/5 shrink-0 space-y-3">
-
-        {/* Credits Card */}
-        <div className={`p-3 rounded-2xl border space-y-2 transition-all ${
-          lowCredits 
-            ? 'bg-red-500/10 border-red-500/30' 
-            : 'bg-blue-600/10 border-blue-500/20'
-        }`}>
-
-          {/* Header row — click anywhere to toggle breakdown */}
-          <div
-            className={`flex items-center justify-between ${isLoggedIn && credits !== null && credits > 0 ? 'cursor-pointer select-none' : ''}`}
-            onClick={() => { if (isLoggedIn && credits !== null && credits > 0) setShowBreakdown(v => !v); }}
-          >
-            <div className="flex items-center gap-1.5">
-              {lowCredits && <i className="fas fa-triangle-exclamation text-red-400 text-[9px]"></i>}
-              <p className={`text-[9px] font-black uppercase tracking-widest ${lowCredits ? 'text-red-400' : 'text-blue-400'}`}>
-                {lowCredits ? 'Low Credits!' : 'Credits'}
-              </p>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="text-[9px] font-black text-white bg-blue-600/30 px-2 py-0.5 rounded-full">
-                {plan}
-              </span>
-              {isLoggedIn && credits !== null && credits > 0 && (
-                <i className={`fas fa-chevron-${showBreakdown ? 'up' : 'down'} text-gray-500 text-[9px]`}></i>
-              )}
-            </div>
-          </div>
-
-          {isLoggedIn ? (
-            <>
-              {/* Progress bar */}
-              <div className="w-full bg-white/5 rounded-full h-1.5 overflow-hidden">
-                <div
-                  className={`${creditColor} h-full rounded-full transition-all duration-700`}
-                  style={{ width: `${creditPct}%` }}
-                />
-              </div>
-
-              {/* Credit count + top up */}
-              <div className="flex items-center justify-between">
-                <p className="text-[11px] font-black text-white">
-                  {credits === null
-                    ? <span className="text-gray-500 text-[9px]">Start backend to load</span>
-                    : <>{c.toLocaleString()}<span className="text-gray-500 font-normal"> credits</span></>
-                  }
-                </p>
-                <button
-                  onClick={() => onSelect(ToolType.PRICING)}
-                  className={`text-[9px] font-black uppercase tracking-widest transition-colors ${
-                    lowCredits ? 'text-red-400 hover:text-red-300' : 'text-blue-400 hover:text-blue-300'
-                  }`}
-                >
-                  Top up →
-                </button>
-              </div>
-
-              {/* Breakdown — toggleable */}
-              {showBreakdown && credits !== null && (
-                <div className="pt-1 border-t border-white/5 space-y-1.5">
-                  <p className="text-[8px] text-gray-600 font-black uppercase tracking-widest">
-                    Your {c} credits can buy:
-                  </p>
-                  {breakdown.map(item => (
-                    <div key={item.label} className="flex items-center justify-between">
-                      <div className="flex items-center gap-1.5">
-                        <i className={`fas ${item.icon} text-[8px] text-gray-500 w-3`}></i>
-                        <span className="text-[9px] text-gray-400">{item.label}</span>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <span className="text-[9px] font-black text-white">
-                          {item.val > 999 ? '999+' : item.val}
-                        </span>
-                        <span className="text-[8px] text-gray-600">×{item.cost}cr</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </>
-          ) : (
-            <p className="text-[10px] text-gray-500">Sign in to see credits</p>
-          )}
-        </div>
-
-        {/* User / Auth */}
-        {isLoggedIn && user ? (
-          <div className="flex items-center gap-2 px-1">
-            <div className="w-7 h-7 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shrink-0">
-              <span className="text-[10px] font-black text-white uppercase">
-                {(user.email ?? 'U')[0]}
-              </span>
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-[9px] text-white font-bold truncate">{user.email}</p>
-              <p className="text-[8px] text-gray-500 uppercase tracking-widest">Logged in</p>
-            </div>
-            <button
-              onClick={() => signOut()}
-              title="Sign out"
-              className="text-gray-600 hover:text-red-400 transition-colors text-[10px]"
+      {/* ── Credits footer ── */}
+      <div className="shrink-0 border-t border-white/5 p-4 space-y-3">
+        {isLoggedIn ? (
+          <>
+            {/* Credit bar */}
+            <div
+              className="flex items-center justify-between cursor-pointer group"
+              onClick={() => onSelect(ToolType.PRICING)}
+              title="Top up credits"
             >
-              <i className="fas fa-right-from-bracket"></i>
+              <div className="flex items-center gap-2">
+                <i className="fas fa-bolt text-[9px] text-purple-400"></i>
+                <span className="text-[9px] font-black text-gray-500 uppercase tracking-widest">CREDITS</span>
+              </div>
+              {/* ✅ Show actual credits from AuthContext — no extra API call */}
+              <div className={`flex items-center gap-1.5 px-2 py-0.5 rounded-lg text-[9px] font-black uppercase tracking-widest ${
+                credits !== null && credits <= 20
+                  ? 'bg-red-500/10 text-red-400 border border-red-500/20'
+                  : 'bg-purple-500/10 text-purple-400 border border-purple-500/20'
+              }`}>
+                {credits !== null ? (
+                  <>
+                    <span>{credits}</span>
+                    {credits <= 20 && <span className="text-red-500">!</span>}
+                  </>
+                ) : (
+                  <span className="animate-pulse">···</span>
+                )}
+              </div>
+            </div>
+
+            {/* Top up button */}
+            <button
+              onClick={() => onSelect(ToolType.PRICING)}
+              className="w-full flex items-center justify-between px-3 py-2 rounded-xl bg-white/3 hover:bg-white/6 border border-white/5 transition-all group"
+            >
+              <span className="text-[9px] font-black text-gray-600 uppercase tracking-widest group-hover:text-gray-400">TOP UP</span>
+              <i className="fas fa-arrow-right text-[9px] text-gray-700 group-hover:text-gray-400"></i>
             </button>
-          </div>
+
+            {/* User email + sign out */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 min-w-0">
+                <div className="w-6 h-6 rounded-full bg-blue-600/20 border border-blue-500/20 flex items-center justify-center shrink-0">
+                  <span className="text-[8px] font-black text-blue-400 uppercase">
+                    {user?.email?.[0] ?? '?'}
+                  </span>
+                </div>
+                <span className="text-[9px] text-gray-600 truncate">{user?.email}</span>
+              </div>
+              <button
+                onClick={signOut}
+                title="Sign out"
+                className="text-gray-700 hover:text-gray-400 transition-colors ml-2 shrink-0"
+              >
+                <i className="fas fa-arrow-right-from-bracket text-[10px]"></i>
+              </button>
+            </div>
+          </>
         ) : (
+          /* Guest state — prompt sign in */
           <button
             onClick={() => setShowAuthModal(true)}
-            className="w-full py-2 rounded-xl bg-white/5 border border-white/10 text-[10px] font-black uppercase tracking-widest text-gray-400 hover:bg-white/10 hover:text-white transition-all"
+            className="w-full flex flex-col gap-1.5 px-3 py-3 rounded-xl bg-purple-500/5 border border-purple-500/15 hover:bg-purple-500/10 transition-all"
           >
-            <i className="fas fa-right-to-bracket mr-2"></i> Sign In
+            <div className="flex items-center justify-between">
+              <span className="text-[9px] font-black text-gray-500 uppercase tracking-widest">CREDITS</span>
+              <span className="text-[9px] font-black text-purple-400 bg-purple-500/10 px-2 py-0.5 rounded-lg border border-purple-500/20">FREE</span>
+            </div>
+            {/* ✅ Show "Sign in to get 100 free" instead of "Start backend to load" */}
+            <span className="text-[8px] text-purple-400/70 font-bold uppercase tracking-widest">
+              Sign in → get 100 free credits
+            </span>
           </button>
         )}
-
       </div>
-    </aside>
+    </div>
   );
 };
 
