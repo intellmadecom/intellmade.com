@@ -1,14 +1,19 @@
 import { GoogleGenAI, Type, GenerateContentResponse, Modality } from "@google/genai";
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000';
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 async function deductCredit(tool: string): Promise<void> {
   try {
     const token = localStorage.getItem('access_token');
     if (!token) return;
-    const res = await fetch(`${API_URL}/api/credits/deduct`, {
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/deduct-credits`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+        'apikey': SUPABASE_ANON_KEY
+      },
       body: JSON.stringify({ tool }),
     });
     const data = await res.json();
@@ -27,7 +32,7 @@ export class GeminiService {
 
   static async checkApiKey() {
     // @ts-ignore
-    if (!window.aistudio) return true; 
+    if (!window.aistudio) return true;
     // @ts-ignore
     return await window.aistudio.hasSelectedApiKey();
   }
@@ -87,14 +92,14 @@ export class GeminiService {
   static async chat(messages: { role: string, content: string }[], usePro = true, useSearch = false) {
     const ai = this.getAI();
     const model = useSearch ? 'gemini-3-flash-preview' : (usePro ? 'gemini-3-pro-preview' : 'gemini-3-flash-preview');
-    
-   const history = messages.slice(0, -1).map(m => {
-  const parts: any[] = [{ text: m.content }];
-  if (m.attachment) {
-    parts.push({ inlineData: { mimeType: m.attachment.mimeType, data: m.attachment.data } });
-  }
-  return { role: m.role as 'user' | 'model', parts };
-});
+
+    const history = messages.slice(0, -1).map(m => {
+      const parts: any[] = [{ text: m.content }];
+      if (m.attachment) {
+        parts.push({ inlineData: { mimeType: m.attachment.mimeType, data: m.attachment.data } });
+      }
+      return { role: m.role as 'user' | 'model', parts };
+    });
 
     const config: any = {
       systemInstruction: "You are an expert AI assistant. Provide concise, accurate, and helpful responses."
@@ -111,12 +116,12 @@ export class GeminiService {
     });
 
     const lastMessage = messages[messages.length - 1];
-   const lastParts: any[] = [{ text: lastMessage.content }];
-if (lastMessage.attachment) {
-  lastParts.push({ inlineData: { mimeType: lastMessage.attachment.mimeType, data: lastMessage.attachment.data } });
-}
-const result = await chat.sendMessage({ message: lastParts });
-    
+    const lastParts: any[] = [{ text: lastMessage.content }];
+    if (lastMessage.attachment) {
+      lastParts.push({ inlineData: { mimeType: lastMessage.attachment.mimeType, data: lastMessage.attachment.data } });
+    }
+    const result = await chat.sendMessage({ message: lastParts });
+
     await deductCredit('general_intelligence');
 
     const text = result.text;
@@ -265,7 +270,7 @@ const result = await chat.sendMessage({ message: lastParts });
         }
       }
     });
-    
+
     try {
       return JSON.parse(response.text || '{}');
     } catch (e) {
