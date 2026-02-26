@@ -1,45 +1,54 @@
 // =============================================================
 // PRICING PAGE — Credit-based system (one-time payments)
 // =============================================================
-// After Stripe checkout, user returns here.
-// Pricing.tsx calls /functions/v1/verify-payment to add credits.
-// Credits STACK: 100 free + 600 personal = 700 total.
+// Flow:
+//   1. User browses app as guest
+//   2. Clicks "Start for Free" → auth modal appears → sign up → 100 credits granted
+//   3. Credits run low (< 20) → upgrade banner appears automatically
+//   4. User clicks upgrade → goes to Stripe checkout
 // =============================================================
 
 import React, { useState, useEffect } from 'react';
 import { useAuth } from './AuthContext';
 
-// ✅ FIXED: correct Supabase function names (match your deployed edge function folder names)
-const API_URL = import.meta.env.VITE_SUPABASE_URL
-  ? `${import.meta.env.VITE_SUPABASE_URL}/functions/v1`
-  : 'http://localhost:4000';
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 
-const CHECKOUT_URL  = `${API_URL}/payments-checkout`;
-const VERIFY_URL    = `${API_URL}/payments-verify`;
+const CHECKOUT_URL = `${SUPABASE_URL}/functions/v1/create-checkout`;
+const VERIFY_URL   = `${SUPABASE_URL}/functions/v1/verify-payment`;
 
-const Pricing: React.FC = () => {
-  const { isLoggedIn, requireAuth, user, refreshCredits } = useAuth(); // ✅ pull user + refreshCredits
+// ── Low credits threshold ──────────────────────────────────────────────────
+const LOW_CREDITS_THRESHOLD = 20;
+
+interface PricingProps {
+  // Optional: if passed, shows as an upgrade modal overlay (low credits mode)
+  lowCreditsMode?: boolean;
+  onClose?: () => void;
+}
+
+const Pricing: React.FC<PricingProps> = ({ lowCreditsMode = false, onClose }) => {
+  const { isLoggedIn, requireAuth, promptFreeCredits, user, credits, refreshCredits } = useAuth();
   const [loadingPlan, setLoadingPlan] = useState<string | null>(null);
   const [paymentMessage, setPaymentMessage] = useState<string | null>(null);
 
+  // ── Handle Stripe return ────────────────────────────────────────────────
   useEffect(() => {
-    // ✅ FIXED: read from window.location.search (params are before # now)
-    const urlParams = new URLSearchParams(window.location.search);
-    const payment   = urlParams.get('payment');
-    const plan      = urlParams.get('plan');
-    const sessionId = urlParams.get('session_id');
+    const urlParams  = new URLSearchParams(window.location.search);
+    const hashParams = new URLSearchParams(window.location.hash.split('?')[1] || '');
+    const payment    = urlParams.get('payment') || hashParams.get('payment');
+    const plan       = urlParams.get('plan')    || hashParams.get('plan');
+    const sessionId  = urlParams.get('session_id') || hashParams.get('session_id');
 
     if (payment === 'success' && plan && sessionId) {
       verifyAndAddCredits(sessionId, plan);
-      // Clean URL after a short delay
       setTimeout(() => {
-        window.history.replaceState(null, '', window.location.pathname + window.location.hash.split('?')[0]);
+        window.history.replaceState(null, '', window.location.pathname);
       }, 1000);
     } else if (payment === 'canceled') {
       setPaymentMessage('Payment was canceled. No charges were made.');
       setTimeout(() => {
         setPaymentMessage(null);
-        window.history.replaceState(null, '', window.location.pathname + window.location.hash.split('?')[0]);
+        window.history.replaceState(null, '', window.location.pathname);
       }, 4000);
     }
   }, []);
@@ -53,7 +62,7 @@ const Pricing: React.FC = () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY || '', // ✅ required by Supabase edge functions
+          'apikey': SUPABASE_ANON_KEY,
           'Authorization': `Bearer ${token}`,
         },
         body: JSON.stringify({ sessionId }),
@@ -62,22 +71,14 @@ const Pricing: React.FC = () => {
       const data = await response.json();
 
       if (data.success) {
-        const creditsAdded  = data.data.added    || 0;
-        const totalCredits  = data.data.credits  || 0;
-
-        if (data.data.alreadyCredited) {
-          setPaymentMessage(`Payment already processed! You have ${totalCredits} credits.`);
-        } else {
-          setPaymentMessage(`Payment successful! +${creditsAdded} credits added. Total: ${totalCredits} credits.`);
-        }
-
-        // ✅ Refresh the credits badge in the header via AuthContext
+        const creditsAdded = data.data.added   || 0;
+        const totalCredits = data.data.credits || 0;
+        setPaymentMessage(
+          data.data.alreadyCredited
+            ? `Already processed! You have ${totalCredits} credits.`
+            : `Payment successful! +${creditsAdded} credits added. Total: ${totalCredits} credits.`
+        );
         await refreshCredits();
-
-        // Also fire legacy event for any other listeners
-        window.dispatchEvent(new CustomEvent('credits-updated', {
-          detail: { credits: totalCredits, plan: data.data.plan }
-        }));
       } else {
         setPaymentMessage(data.error || 'Failed to verify payment. Please contact support.');
       }
@@ -85,17 +86,23 @@ const Pricing: React.FC = () => {
       console.error('Verify payment error:', error);
       setPaymentMessage('Failed to verify payment. Your credits will be added shortly.');
     }
-
     setTimeout(() => setPaymentMessage(null), 8000);
   };
 
-  // ✅ Unified checkout handler — no duplication
+  // ── Checkout ────────────────────────────────────────────────────────────
   const startCheckout = async (planId: string) => {
-    if (!requireAuth(planId)) return;
+    // "Start for Free" — show auth modal to sign up and get 100 free credits
     if (planId === 'free') {
-      alert('You already have 100 free credits! Go try the tools.');
+      if (isLoggedIn) {
+        setPaymentMessage('You already have free credits! Start using the tools.');
+        setTimeout(() => setPaymentMessage(null), 3000);
+      } else {
+        promptFreeCredits(); // ✅ shows sign-in modal with "get free credits" context
+      }
       return;
     }
+
+    if (!requireAuth(planId)) return;
 
     try {
       setLoadingPlan(planId);
@@ -105,13 +112,10 @@ const Pricing: React.FC = () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY || '', // ✅ required by Supabase
+          'apikey': SUPABASE_ANON_KEY,
           'Authorization': `Bearer ${token}`,
         },
-        body: JSON.stringify({
-          plan: planId,
-          email: user?.email, // ✅ pre-fills Stripe checkout form
-        }),
+        body: JSON.stringify({ plan: planId, email: user?.email }),
       });
 
       const data = await response.json();
@@ -140,7 +144,8 @@ const Pricing: React.FC = () => {
         'Image generation & edit',
         '❌ No video generation'
       ],
-      button: 'Start for Free',
+      button: isLoggedIn ? 'Already Active' : 'Start for Free',
+      disabled: isLoggedIn,
       color: 'border-white/10 hover:border-white/20'
     },
     {
@@ -193,11 +198,32 @@ const Pricing: React.FC = () => {
   ];
 
   return (
-    <div className="max-w-7xl mx-auto px-4 py-4 animate-fadeIn">
-      {/* Payment status message */}
+    <div className={`max-w-7xl mx-auto px-4 py-4 animate-fadeIn ${lowCreditsMode ? 'pt-0' : ''}`}>
+
+      {/* ── Low credits warning banner ── */}
+      {lowCreditsMode && (
+        <div className="mb-6 p-4 rounded-2xl bg-red-500/10 border border-red-500/30 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <i className="fas fa-triangle-exclamation text-red-400 text-lg"></i>
+            <div>
+              <p className="text-red-400 font-black text-sm uppercase tracking-widest">Low Credits</p>
+              <p className="text-gray-400 text-xs">
+                You have <span className="text-red-400 font-bold">{credits ?? 0} credits</span> remaining. Top up to keep creating.
+              </p>
+            </div>
+          </div>
+          {onClose && (
+            <button onClick={onClose} className="text-gray-500 hover:text-white transition-colors">
+              <i className="fas fa-times"></i>
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* ── Payment status message ── */}
       {paymentMessage && (
         <div className={`mb-6 p-4 rounded-2xl text-center font-bold text-sm ${
-          paymentMessage.includes('successful') || paymentMessage.includes('added') || paymentMessage.includes('processed')
+          paymentMessage.includes('successful') || paymentMessage.includes('added') || paymentMessage.includes('processed') || paymentMessage.includes('Already')
             ? 'bg-green-500/20 border border-green-500/40 text-green-400'
             : paymentMessage.includes('Verifying')
             ? 'bg-blue-500/20 border border-blue-500/40 text-blue-400 animate-pulse'
@@ -214,7 +240,7 @@ const Pricing: React.FC = () => {
         </p>
       </div>
 
-      {/* 4 Pricing Cards */}
+      {/* ── 4 Pricing Cards ── */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-10 items-stretch">
         {pricingTiers.map((tier, idx) => (
           <div
@@ -248,12 +274,14 @@ const Pricing: React.FC = () => {
             </ul>
 
             <button
-              onClick={() => startCheckout(tier.planId)}
-              disabled={loadingPlan === tier.planId}
-              className={`w-full py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all cursor-pointer ${
-                tier.featured
-                  ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-xl shadow-purple-900/30 hover:brightness-110 active:scale-95'
-                  : 'bg-white/5 hover:bg-white/10 text-white border border-white/10'
+              onClick={() => !tier.disabled && startCheckout(tier.planId)}
+              disabled={loadingPlan === tier.planId || tier.disabled}
+              className={`w-full py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all ${
+                tier.disabled
+                  ? 'bg-white/5 text-gray-600 border border-white/5 cursor-default'
+                  : tier.featured
+                  ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-xl shadow-purple-900/30 hover:brightness-110 active:scale-95 cursor-pointer'
+                  : 'bg-white/5 hover:bg-white/10 text-white border border-white/10 cursor-pointer'
               } ${loadingPlan === tier.planId ? 'opacity-50 cursor-wait' : ''}`}
             >
               {loadingPlan === tier.planId ? 'Processing...' : tier.button}
@@ -262,7 +290,7 @@ const Pricing: React.FC = () => {
         ))}
       </div>
 
-      {/* Flex Credit Section */}
+      {/* ── Flex Credit Section ── */}
       <div className="relative glass p-8 rounded-[3rem] border-2 border-amber-500/40 bg-gradient-to-br from-amber-500/10 via-black/60 to-amber-900/10 transition-all duration-300 shadow-2xl overflow-hidden group blink-attention">
         <div className="absolute inset-0 bg-amber-400/5 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none"></div>
         <div className="absolute top-0 right-0 w-32 h-32 bg-amber-500/10 blur-[50px] pointer-events-none"></div>
@@ -288,7 +316,7 @@ const Pricing: React.FC = () => {
                 { val: '12', unit: 'Edits' },
                 { val: '50', unit: 'Chats' }
               ].map((item, i) => (
-                <div key={i} className="flex flex-col items-center justify-center p-3 rounded-2xl bg-white/5 border border-white/5 transition-all">
+                <div key={i} className="flex flex-col items-center justify-center p-3 rounded-2xl bg-white/5 border border-white/5">
                   <span className="text-xl font-black text-amber-500">{item.val}</span>
                   <span className="text-[8px] text-gray-500 font-black uppercase tracking-widest">{item.unit}</span>
                 </div>
@@ -311,7 +339,7 @@ const Pricing: React.FC = () => {
         </div>
       </div>
 
-      {/* Footer */}
+      {/* ── Footer ── */}
       <div className="mt-12 text-center max-w-2xl mx-auto border-t border-white/5 pt-8 pb-12">
         <p className="text-[10px] text-gray-600 font-black uppercase tracking-widest leading-relaxed">
           Credits roll over for 90 days. Custom SLA and multi-seat licensing available for enterprise.
@@ -323,9 +351,7 @@ const Pricing: React.FC = () => {
           0%, 80%, 100% { border-color: rgba(245, 158, 11, 0.4); }
           85%, 95% { border-color: rgba(245, 158, 11, 1); box-shadow: 0 0 30px rgba(245, 158, 11, 0.3); }
         }
-        .blink-attention {
-          animation: blinker 4s infinite ease-in-out;
-        }
+        .blink-attention { animation: blinker 4s infinite ease-in-out; }
       `}</style>
     </div>
   );

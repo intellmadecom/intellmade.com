@@ -18,23 +18,21 @@ import Sidebar from './components/Sidebar';
 import AuthModal from './components/AuthModal';
 import { GeminiService } from './services/gemini';
 
-// Session duration: 6 hours in milliseconds
 const SESSION_DURATION_MS = 6 * 60 * 60 * 1000;
 const SESSION_KEY = 'intellmade_session_start';
+const LOW_CREDITS_THRESHOLD = 20;
 
-// ── Inner app that can access AuthContext ──────────────────────────────────────
 const AppInner: React.FC = () => {
-  const { user, credits } = useAuth(); // ✅ pull credits from AuthContext
+  const { user, credits } = useAuth();
   const [currentTool, setCurrentTool] = useState<ToolType>(ToolType.LANDING);
   const [hasApiKey, setHasApiKey] = useState(false);
   const [isSidebarVisible, setIsSidebarVisible] = useState(true);
+  const [showLowCreditsUpgrade, setShowLowCreditsUpgrade] = useState(false);
 
-  // Session expiry state
   const [sessionWarning, setSessionWarning] = useState<'soon' | 'expired' | null>(null);
   const [timeLeft, setTimeLeft] = useState('');
   const sessionTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Lifted state for Image Creator
   const [imageCreatorState, setImageCreatorState] = useState({
     prompt: '',
     image: null as string | null,
@@ -42,7 +40,6 @@ const AppInner: React.FC = () => {
     aspectRatio: '1:1'
   });
 
-  // Lifted state for Photo Animator
   const [animatorState, setAnimatorState] = useState({
     file: null as File | Blob | null,
     preview: null as string | null,
@@ -53,12 +50,24 @@ const AppInner: React.FC = () => {
     resultVideo: null as string | null
   });
 
-  // ── Session timer ──────────────────────────────────────────
+  // ── Show low credits upgrade modal when credits drop below threshold ──────
+  useEffect(() => {
+    if (
+      user &&                                        // logged in
+      credits !== null &&                            // credits loaded
+      credits <= LOW_CREDITS_THRESHOLD &&            // low balance
+      credits > 0 &&                                 // still has some (not zero)
+      currentTool !== ToolType.PRICING               // not already on pricing
+    ) {
+      setShowLowCreditsUpgrade(true);
+    }
+  }, [credits, user]);
+
+  // ── Session timer ──────────────────────────────────────────────────────
   const startSessionTimer = () => {
     if (!sessionStorage.getItem(SESSION_KEY)) {
       sessionStorage.setItem(SESSION_KEY, Date.now().toString());
     }
-
     if (sessionTimerRef.current) clearInterval(sessionTimerRef.current);
 
     sessionTimerRef.current = setInterval(() => {
@@ -73,8 +82,7 @@ const AppInner: React.FC = () => {
         setTimeLeft('');
       } else if (remaining <= 15 * 60 * 1000) {
         setSessionWarning('soon');
-        const mins = Math.ceil(remaining / 60000);
-        setTimeLeft(`${mins}m`);
+        setTimeLeft(`${Math.ceil(remaining / 60000)}m`);
       } else {
         setSessionWarning(null);
         setTimeLeft('');
@@ -83,59 +91,27 @@ const AppInner: React.FC = () => {
   };
 
   const clearWorkspace = () => {
-    setImageCreatorState({
-      prompt: '',
-      image: null,
-      subjectSlots: [null, null, null, null, null],
-      aspectRatio: '1:1'
-    });
-    setAnimatorState({
-      file: null,
-      preview: null,
-      bgFile: null,
-      bgPreview: null,
-      prompt: '',
-      aspectRatio: '16:9',
-      resultVideo: null
-    });
+    setImageCreatorState({ prompt: '', image: null, subjectSlots: [null,null,null,null,null], aspectRatio: '1:1' });
+    setAnimatorState({ file: null, preview: null, bgFile: null, bgPreview: null, prompt: '', aspectRatio: '16:9', resultVideo: null });
     sessionStorage.removeItem(SESSION_KEY);
     setCurrentTool(ToolType.LANDING);
-  };
-
-  const dismissWarning = () => setSessionWarning(null);
-
-  const extendSession = () => {
-    sessionStorage.setItem(SESSION_KEY, Date.now().toString());
-    setSessionWarning(null);
-    setTimeLeft('');
   };
 
   useEffect(() => {
     checkKey();
     handleStripeReturn();
     startSessionTimer();
-    return () => {
-      if (sessionTimerRef.current) clearInterval(sessionTimerRef.current);
-    };
+    return () => { if (sessionTimerRef.current) clearInterval(sessionTimerRef.current); };
   }, []);
 
-  // ── Stripe return handler ──────────────────────────────────
-  // ✅ FIXED: site uses hash routing (#), so payment params land in
-  //    window.location.search (before the #) with the updated success_url.
-  //    Also handles legacy hash-based params just in case.
   const handleStripeReturn = () => {
-    // Primary: params before the hash (e.g. https://intellmade.com?payment=success#...)
     const searchParams = new URLSearchParams(window.location.search);
-    // Fallback: params after the hash (e.g. https://intellmade.com/#pricing?payment=success)
-    const hashParams = new URLSearchParams(window.location.hash.split('?')[1] || '');
-
-    const payment = searchParams.get('payment') || hashParams.get('payment');
+    const hashParams   = new URLSearchParams(window.location.hash.split('?')[1] || '');
+    const payment      = searchParams.get('payment') || hashParams.get('payment');
 
     if (payment === 'success' || payment === 'canceled') {
       setCurrentTool(ToolType.PRICING);
-      // Clean up URL
-      window.history.replaceState({}, '', window.location.pathname + window.location.hash.split('?')[0]);
-
+      window.history.replaceState({}, '', window.location.pathname);
       const savedTool = sessionStorage.getItem('pre_stripe_tool') as ToolType | null;
       if (savedTool) {
         setTimeout(() => {
@@ -167,23 +143,28 @@ const AppInner: React.FC = () => {
 
   const handleAnimateSharedImage = (base64: string) => {
     const dataUrl = `data:image/png;base64,${base64}`;
-    fetch(dataUrl)
-      .then(res => res.blob())
-      .then(blob => {
-        setAnimatorState(prev => ({
-          ...prev,
-          file: blob,
-          preview: dataUrl,
-          resultVideo: null
-        }));
-        setCurrentTool(ToolType.ANIMATE_IMAGE);
-      });
+    fetch(dataUrl).then(res => res.blob()).then(blob => {
+      setAnimatorState(prev => ({ ...prev, file: blob, preview: dataUrl, resultVideo: null }));
+      setCurrentTool(ToolType.ANIMATE_IMAGE);
+    });
   };
 
   const show = (tool: ToolType) => currentTool === tool;
 
   return (
     <div className="flex min-h-screen bg-gray-950 overflow-hidden">
+      {/* ── Low credits upgrade overlay ── */}
+      {showLowCreditsUpgrade && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-5xl max-h-[90vh] overflow-y-auto rounded-[3rem] bg-gray-950 border border-white/10">
+            <Pricing
+              lowCreditsMode={true}
+              onClose={() => setShowLowCreditsUpgrade(false)}
+            />
+          </div>
+        </div>
+      )}
+
       <div className={`fixed lg:sticky top-0 h-screen z-40 transition-transform duration-300 ease-in-out ${isSidebarVisible ? 'translate-x-0' : '-translate-x-full lg:hidden'}`}>
         <Sidebar
           active={currentTool}
@@ -218,72 +199,63 @@ const AppInner: React.FC = () => {
           <div className="flex items-center gap-3">
             <h1 className="text-xs font-black tracking-widest text-gray-500 uppercase hidden md:block">INTELLMADE STUDIO</h1>
 
-            {/* ── Session warning banner ── */}
             {sessionWarning === 'soon' && (
               <div className="flex items-center gap-2 bg-amber-500/10 border border-amber-500/30 px-3 py-1.5 rounded-xl animate-pulse">
                 <i className="fas fa-clock text-amber-400 text-[10px]"></i>
-                <span className="text-[10px] font-black text-amber-400 uppercase tracking-widest">
-                  Session expires in {timeLeft}
-                </span>
-                <button
-                  onClick={extendSession}
-                  className="text-[9px] text-amber-300 hover:text-white underline ml-1 transition-colors"
-                >
-                  Extend
-                </button>
-                <button onClick={dismissWarning} className="text-amber-600 hover:text-amber-400 ml-1 text-[10px]">
-                  <i className="fas fa-times"></i>
-                </button>
+                <span className="text-[10px] font-black text-amber-400 uppercase tracking-widest">Session expires in {timeLeft}</span>
+                <button onClick={() => { sessionStorage.setItem(SESSION_KEY, Date.now().toString()); setSessionWarning(null); }} className="text-[9px] text-amber-300 hover:text-white underline ml-1">Extend</button>
+                <button onClick={() => setSessionWarning(null)} className="text-amber-600 hover:text-amber-400 ml-1 text-[10px]"><i className="fas fa-times"></i></button>
               </div>
             )}
 
             {sessionWarning === 'expired' && (
               <div className="flex items-center gap-2 bg-red-500/10 border border-red-500/30 px-3 py-1.5 rounded-xl">
                 <i className="fas fa-triangle-exclamation text-red-400 text-[10px]"></i>
-                <span className="text-[10px] font-black text-red-400 uppercase tracking-widest">
-                  Session expired — workspace cleared
-                </span>
-                <button
-                  onClick={() => { setSessionWarning(null); startSessionTimer(); }}
-                  className="text-[9px] text-red-300 hover:text-white underline ml-1 transition-colors"
-                >
-                  Start new
-                </button>
+                <span className="text-[10px] font-black text-red-400 uppercase tracking-widest">Session expired — workspace cleared</span>
+                <button onClick={() => { setSessionWarning(null); startSessionTimer(); }} className="text-[9px] text-red-300 hover:text-white underline ml-1">Start new</button>
               </div>
             )}
 
             {!hasApiKey && (
-              <button
-                onClick={handleOpenKey}
-                className="bg-yellow-500/10 text-yellow-500 border border-yellow-500/30 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-yellow-500/20 transition-all"
-              >
+              <button onClick={handleOpenKey} className="bg-yellow-500/10 text-yellow-500 border border-yellow-500/30 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-yellow-500/20 transition-all">
                 <i className="fas fa-key mr-2"></i> Key
               </button>
             )}
 
-            {/* ✅ Credits + email badge — shown when user is logged in */}
-            {user && (
+            {/* ── Credits + email badge ── */}
+            {user ? (
               <div className="flex items-center gap-2">
-                {/* Credit pill */}
                 <div
-                  className="flex items-center gap-1.5 bg-purple-500/10 border border-purple-500/30 px-2.5 py-1.5 rounded-xl cursor-pointer hover:bg-purple-500/20 transition-all"
                   onClick={() => handleToolSelect(ToolType.PRICING)}
                   title="Top up credits"
+                  className={`flex items-center gap-1.5 border px-2.5 py-1.5 rounded-xl cursor-pointer transition-all ${
+                    credits !== null && credits <= LOW_CREDITS_THRESHOLD
+                      ? 'bg-red-500/10 border-red-500/30 hover:bg-red-500/20 animate-pulse'
+                      : 'bg-purple-500/10 border-purple-500/30 hover:bg-purple-500/20'
+                  }`}
                 >
-                  <i className="fas fa-bolt text-purple-400 text-[9px]"></i>
-                  <span className="text-[10px] font-black text-purple-300 uppercase tracking-widest">
+                  <i className={`fas fa-bolt text-[9px] ${credits !== null && credits <= LOW_CREDITS_THRESHOLD ? 'text-red-400' : 'text-purple-400'}`}></i>
+                  <span className={`text-[10px] font-black uppercase tracking-widest ${credits !== null && credits <= LOW_CREDITS_THRESHOLD ? 'text-red-300' : 'text-purple-300'}`}>
                     {credits ?? 100} CR
                   </span>
+                  {credits !== null && credits <= LOW_CREDITS_THRESHOLD && (
+                    <span className="text-[8px] text-red-400 font-black">LOW</span>
+                  )}
                 </div>
-
-                {/* Email pill */}
                 <div className="flex items-center gap-1.5 bg-white/5 border border-white/10 px-2.5 py-1.5 rounded-xl max-w-[140px]">
                   <i className="fas fa-circle text-green-400 text-[6px]"></i>
-                  <span className="text-[10px] text-gray-400 truncate">
-                    {user.email}
-                  </span>
+                  <span className="text-[10px] text-gray-400 truncate">{user.email}</span>
                 </div>
               </div>
+            ) : (
+              // Guest — show "Get 100 Free Credits" CTA
+              <button
+                onClick={() => handleToolSelect(ToolType.PRICING)}
+                className="flex items-center gap-2 bg-purple-500/10 border border-purple-500/30 px-3 py-1.5 rounded-xl text-[10px] font-black text-purple-300 uppercase tracking-widest hover:bg-purple-500/20 transition-all"
+              >
+                <i className="fas fa-gift text-purple-400"></i>
+                <span className="hidden sm:inline">100 Free Credits</span>
+              </button>
             )}
           </div>
         </header>
@@ -302,45 +274,32 @@ const AppInner: React.FC = () => {
           {hasApiKey ? (
             <>
               <div style={{ display: show(ToolType.IMAGE_GEN) ? 'block' : 'none' }}>
-                <ImageCreator
-                  state={imageCreatorState}
-                  setState={setImageCreatorState}
-                  onAnimateRequest={handleAnimateSharedImage}
-                />
+                <ImageCreator state={imageCreatorState} setState={setImageCreatorState} onAnimateRequest={handleAnimateSharedImage} />
               </div>
-
               <div style={{ display: show(ToolType.ANIMATE_IMAGE) ? 'block' : 'none' }}>
                 <VeoImageAnimator state={animatorState} setState={setAnimatorState} />
               </div>
-
               <div style={{ display: show(ToolType.GENERAL_INTEL) ? 'block' : 'none', height: '100%' }}>
                 <GeneralIntelligence />
               </div>
-
               <div style={{ display: show(ToolType.PROMPT_VIDEO) ? 'block' : 'none' }}>
                 <VeoPromptVideo />
               </div>
-
               <div style={{ display: show(ToolType.VIDEO_ORACLE) ? 'block' : 'none' }}>
                 <VideoAnalyzer />
               </div>
-
               <div style={{ display: show(ToolType.IMAGE_ANALYZER) ? 'block' : 'none' }}>
                 <ImageAnalyzer />
               </div>
-
               <div style={{ display: show(ToolType.VOICE_CHAT) ? 'block' : 'none' }}>
                 <LiveVoiceChat />
               </div>
-
               <div style={{ display: show(ToolType.IMAGE_CLONER) ? 'block' : 'none' }}>
                 <ImageCloner onAnimateRequest={handleAnimateSharedImage} />
               </div>
-
               <div style={{ display: show(ToolType.IMAGE_EDITOR) ? 'block' : 'none' }}>
                 <ImageEditor onAnimateRequest={handleAnimateSharedImage} />
               </div>
-
               <div style={{ display: show(ToolType.AUDIO_TRANSCRIBER) ? 'block' : 'none' }}>
                 <AudioTranscriber />
               </div>
@@ -351,13 +310,8 @@ const AppInner: React.FC = () => {
                 <div className="bg-yellow-500/10 border border-yellow-500/50 p-8 rounded-2xl max-w-md">
                   <i className="fas fa-key text-4xl text-yellow-500 mb-4"></i>
                   <h2 className="text-2xl font-bold mb-2">API Key Required</h2>
-                  <p className="text-gray-400 mb-6">
-                    To use advanced AI features, you must select a paid API key from Google AI Studio.
-                  </p>
-                  <button
-                    onClick={handleOpenKey}
-                    className="w-full bg-yellow-500 hover:bg-yellow-600 text-black font-bold py-3 px-6 rounded-xl transition-all"
-                  >
+                  <p className="text-gray-400 mb-6">To use advanced AI features, you must select a paid API key from Google AI Studio.</p>
+                  <button onClick={handleOpenKey} className="w-full bg-yellow-500 hover:bg-yellow-600 text-black font-bold py-3 px-6 rounded-xl transition-all">
                     Select API Key
                   </button>
                 </div>
@@ -370,14 +324,11 @@ const AppInner: React.FC = () => {
   );
 };
 
-// ── Root component with AuthProvider ──────────────────────────────────────────
-const App: React.FC = () => {
-  return (
-    <AuthProvider>
-      <AppInner />
-      <AuthModal />
-    </AuthProvider>
-  );
-};
+const App: React.FC = () => (
+  <AuthProvider>
+    <AppInner />
+    <AuthModal />
+  </AuthProvider>
+);
 
 export default App;
