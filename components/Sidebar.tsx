@@ -1,7 +1,5 @@
 // =============================================================
 // SIDEBAR — Navigation + Credits Display
-// Credits come from AuthContext (already fetched via get-credits edge function)
-// No separate API call needed here
 // =============================================================
 
 import React from 'react';
@@ -14,22 +12,24 @@ interface SidebarProps {
 }
 
 const NAV_ITEMS = [
-  { tool: ToolType.LANDING,           icon: 'fa-house',         label: 'HOME' },
-  { tool: ToolType.VOICE_CHAT,        icon: 'fa-microphone',    label: 'LIVE VOICE STUDIO' },
-  { tool: ToolType.IMAGE_GEN,         icon: 'fa-palette',       label: 'IMAGE GENERATOR' },
-  { tool: ToolType.IMAGE_EDITOR,      icon: 'fa-pen-nib',       label: 'NANO EDITOR' },
-  { tool: ToolType.PROMPT_VIDEO,      icon: 'fa-video',         label: 'VIDEO GENERATOR' },
-  { tool: ToolType.ANIMATE_IMAGE,     icon: 'fa-film',          label: 'PHOTO ANIMATOR' },
-  { tool: ToolType.IMAGE_CLONER,      icon: 'fa-clone',         label: 'AI CLONE STUDIO' },
-  { tool: ToolType.GENERAL_INTEL,     icon: 'fa-brain',         label: 'AI ASSISTANT' },
+  { tool: ToolType.LANDING,           icon: 'fa-house',            label: 'HOME' },
+  { tool: ToolType.VOICE_CHAT,        icon: 'fa-microphone',       label: 'LIVE VOICE STUDIO' },
+  { tool: ToolType.IMAGE_GEN,         icon: 'fa-palette',          label: 'IMAGE GENERATOR' },
+  { tool: ToolType.IMAGE_EDITOR,      icon: 'fa-pen-nib',          label: 'NANO EDITOR' },
+  { tool: ToolType.PROMPT_VIDEO,      icon: 'fa-video',            label: 'VIDEO GENERATOR' },
+  { tool: ToolType.ANIMATE_IMAGE,     icon: 'fa-film',             label: 'PHOTO ANIMATOR' },
+  { tool: ToolType.IMAGE_CLONER,      icon: 'fa-clone',            label: 'AI CLONE STUDIO' },
+  { tool: ToolType.GENERAL_INTEL,     icon: 'fa-brain',            label: 'AI ASSISTANT' },
   { tool: ToolType.VIDEO_ORACLE,      icon: 'fa-magnifying-glass', label: 'VIDEO INSIGHTS' },
-  { tool: ToolType.IMAGE_ANALYZER,    icon: 'fa-camera',        label: 'IMAGE ANALYSIS' },
-  { tool: ToolType.AUDIO_TRANSCRIBER, icon: 'fa-waveform-lines', label: 'SPEECH LOGIC' },
-  { tool: ToolType.PRICING,           icon: 'fa-tag',           label: 'PRICING' },
+  { tool: ToolType.IMAGE_ANALYZER,    icon: 'fa-camera',           label: 'IMAGE ANALYSIS' },
+  { tool: ToolType.AUDIO_TRANSCRIBER, icon: 'fa-waveform-lines',   label: 'SPEECH LOGIC' },
+  { tool: ToolType.PRICING,           icon: 'fa-tag',              label: 'PRICING' },
 ];
 
 const Sidebar: React.FC<SidebarProps> = ({ active, onSelect }) => {
   const { user, credits, isLoggedIn, setShowAuthModal, signOut } = useAuth();
+
+  const creditsLow = credits !== null && credits <= 20;
 
   return (
     <div className="w-64 h-full flex flex-col bg-gray-950 border-r border-white/5 overflow-hidden">
@@ -57,30 +57,29 @@ const Sidebar: React.FC<SidebarProps> = ({ active, onSelect }) => {
         ))}
       </nav>
 
-      {/* ── Credits footer ── */}
+      {/* ── Footer ── */}
       <div className="shrink-0 border-t border-white/5 p-4 space-y-3">
         {isLoggedIn ? (
           <>
-            {/* Credit bar */}
+            {/* Credits row */}
             <div
-              className="flex items-center justify-between cursor-pointer group"
+              className="flex items-center justify-between cursor-pointer"
               onClick={() => onSelect(ToolType.PRICING)}
               title="Top up credits"
             >
               <div className="flex items-center gap-2">
-                <i className="fas fa-bolt text-[9px] text-purple-400"></i>
+                <i className={`fas fa-bolt text-[9px] ${creditsLow ? 'text-red-400' : 'text-purple-400'}`}></i>
                 <span className="text-[9px] font-black text-gray-500 uppercase tracking-widest">CREDITS</span>
               </div>
-              {/* ✅ Show actual credits from AuthContext — no extra API call */}
-              <div className={`flex items-center gap-1.5 px-2 py-0.5 rounded-lg text-[9px] font-black uppercase tracking-widest ${
-                credits !== null && credits <= 20
-                  ? 'bg-red-500/10 text-red-400 border border-red-500/20'
-                  : 'bg-purple-500/10 text-purple-400 border border-purple-500/20'
+              <div className={`flex items-center gap-1 px-2 py-0.5 rounded-lg text-[9px] font-black uppercase tracking-widest border ${
+                creditsLow
+                  ? 'bg-red-500/10 text-red-400 border-red-500/20'
+                  : 'bg-purple-500/10 text-purple-400 border-purple-500/20'
               }`}>
                 {credits !== null ? (
                   <>
-                    <span>{credits}</span>
-                    {credits <= 20 && <span className="text-red-500">!</span>}
+                    <span>{credits} CR</span>
+                    {creditsLow && <span className="text-red-500 ml-1">LOW</span>}
                   </>
                 ) : (
                   <span className="animate-pulse">···</span>
@@ -107,28 +106,23 @@ const Sidebar: React.FC<SidebarProps> = ({ active, onSelect }) => {
                 </div>
                 <span className="text-[9px] text-gray-600 truncate">{user?.email}</span>
               </div>
-              <button
-                onClick={signOut}
-                title="Sign out"
-                className="text-gray-700 hover:text-gray-400 transition-colors ml-2 shrink-0"
-              >
+              <button onClick={signOut} title="Sign out" className="text-gray-700 hover:text-gray-400 transition-colors ml-2 shrink-0">
                 <i className="fas fa-arrow-right-from-bracket text-[10px]"></i>
               </button>
             </div>
           </>
         ) : (
-          /* Guest state — prompt sign in */
+          /* Guest */
           <button
             onClick={() => setShowAuthModal(true)}
             className="w-full flex flex-col gap-1.5 px-3 py-3 rounded-xl bg-purple-500/5 border border-purple-500/15 hover:bg-purple-500/10 transition-all"
           >
             <div className="flex items-center justify-between">
               <span className="text-[9px] font-black text-gray-500 uppercase tracking-widest">CREDITS</span>
-              <span className="text-[9px] font-black text-purple-400 bg-purple-500/10 px-2 py-0.5 rounded-lg border border-purple-500/20">FREE</span>
+              <span className="text-[9px] font-black text-purple-400 bg-purple-500/10 px-2 py-0.5 rounded-lg border border-purple-500/20">100 FREE</span>
             </div>
-          
             <span className="text-[8px] text-purple-400/70 font-bold uppercase tracking-widest">
-              Sign in → get 100 free credits
+              Sign in to get started
             </span>
           </button>
         )}
