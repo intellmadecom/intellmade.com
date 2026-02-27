@@ -84,12 +84,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, newSession) => {
-        if (event === 'SIGNED_IN' && newSession) {
-          setSession(newSession);
-          setUser(newSession.user);
-          localStorage.setItem('access_token', newSession.access_token);
-          setShowAuthModal(false);
-          await fetchCredits(newSession.user.id);
+       if (event === 'SIGNED_IN' && newSession) {
+  setSession(newSession);
+  setUser(newSession.user);
+  localStorage.setItem('access_token', newSession.access_token);
+  setShowAuthModal(false);
+  await fetchCredits(newSession.user.id);
+  const returnUrl = localStorage.getItem('auth_return_url');
+  if (returnUrl) {
+    localStorage.removeItem('auth_return_url');
+    if (returnUrl !== window.location.href) {
+      window.location.href = returnUrl;
+    }
+  }
+
         } else if (event === 'SIGNED_OUT') {
           setSession(null);
           setUser(null);
