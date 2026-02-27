@@ -126,7 +126,7 @@ const Sidebar: React.FC<SidebarProps> = ({ active, onSelect }) => {
               <span className="text-[9px] font-black text-gray-500 uppercase tracking-widest">CREDITS</span>
               <span className="text-[9px] font-black text-purple-400 bg-purple-500/10 px-2 py-0.5 rounded-lg border border-purple-500/20">FREE</span>
             </div>
-            {/* ✅ Show "Sign in to get 100 free" instead of "Start backend to load" */}
+          
             <span className="text-[8px] text-purple-400/70 font-bold uppercase tracking-widest">
               Sign in → get 100 free credits
             </span>
