@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { GeminiService } from '../services/gemini';
 import { useAuth } from './AuthContext';
+import { ToolType } from '../types';
 
 interface ImageCreatorProps {
   state: {
@@ -16,27 +17,51 @@ interface ImageCreatorProps {
     aspectRatio: string;
   }>>;
   onAnimateRequest?: (base64: string) => void;
+  onSelect?: (tool: ToolType) => void; // Added to navigate to pricing
 }
 
-const ImageCreator: React.FC<ImageCreatorProps> = ({ state, setState, onAnimateRequest }) => {
+const ImageCreator: React.FC<ImageCreatorProps> = ({ state, setState, onAnimateRequest, onSelect }) => {
   const { prompt, image, subjectSlots, aspectRatio } = state;
   const [loading, setLoading] = useState(false);
-  const { requireAuth, isLoggedIn, pendingAction, setPendingAction } = useAuth();
+  const { requireAuth, isLoggedIn, pendingAction, setPendingAction, credits } = useAuth();
   const abortControllerRef = useRef<AbortController | null>(null);
 
-  // ✅ After magic link sign-in, if pendingAction was 'download', auto-trigger download
+  // ✅ Auto-download after magic link return
   useEffect(() => {
     if (isLoggedIn && pendingAction === 'download' && image) {
-      triggerDownload(image);
-      setPendingAction(null);
+      if (credits !== null && credits > 0) {
+        triggerDownload(image);
+        setPendingAction(null);
+      } else if (credits === 0) {
+        onSelect?.(ToolType.PRICING);
+        setPendingAction(null);
+      }
     }
-  }, [isLoggedIn, pendingAction, image]);
+  }, [isLoggedIn, pendingAction, image, credits, onSelect, setPendingAction]);
 
   const triggerDownload = (src: string) => {
     const link = document.createElement('a');
     link.href = src;
     link.download = 'intellmade-vision.png';
     link.click();
+  };
+
+  const handleDownload = () => {
+    // 1. Check Auth first
+    if (!isLoggedIn) {
+      setPendingAction('download');
+      requireAuth('download');
+      return;
+    }
+
+    // 2. Check Credits
+    if (credits !== null && credits <= 0) {
+      onSelect?.(ToolType.PRICING);
+      return;
+    }
+
+    // 3. Download
+    if (image) triggerDownload(image);
   };
 
   const handleGenerate = async () => {
@@ -66,16 +91,9 @@ const ImageCreator: React.FC<ImageCreatorProps> = ({ state, setState, onAnimateR
     }
   };
 
-  const handleDownload = () => {
-    // ✅ requireAuth saves 'download' as pendingAction — restored after sign-in
-    if (!requireAuth('download')) return;
-    if (!image) return;
-    triggerDownload(image);
-  };
-
   const assignToSlot = (img: string, index: number) => {
     const newSlots = [...subjectSlots];
-    newSlots[index] = img;
+    newSlots[index] = img || null;
     setState(prev => ({ ...prev, subjectSlots: newSlots }));
   };
 
@@ -88,7 +106,6 @@ const ImageCreator: React.FC<ImageCreatorProps> = ({ state, setState, onAnimateR
 
   return (
     <div className="h-[calc(100vh-theme(spacing.16)-theme(spacing.12))] flex gap-4 animate-fadeIn overflow-hidden">
-      {/* Settings Column */}
       <div className="w-80 lg:w-96 shrink-0 flex flex-col gap-4 overflow-y-auto internal-scroll pr-2 pb-4">
         <div className="glass p-5 rounded-[2.5rem] flex flex-col gap-5 border-white/5 bg-gray-950/40">
           <div>
@@ -96,12 +113,8 @@ const ImageCreator: React.FC<ImageCreatorProps> = ({ state, setState, onAnimateR
             <p className="text-[9px] text-gray-500 uppercase tracking-widest">Image Generation Suite</p>
           </div>
 
-          {/* Subject Slots */}
           <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Character Memory</label>
-              <i className="fas fa-fingerprint text-[10px] text-indigo-500"></i>
-            </div>
+            <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Character Memory</label>
             <div className="grid grid-cols-5 gap-2">
               {subjectSlots.map((slot, idx) => (
                 <div key={idx} className="relative group">
@@ -109,7 +122,7 @@ const ImageCreator: React.FC<ImageCreatorProps> = ({ state, setState, onAnimateR
                     {slot ? <img src={slot} className="w-full h-full object-cover" /> : <i className="fas fa-plus text-white/5 text-[10px]"></i>}
                   </div>
                   {slot && (
-                    <button onClick={() => assignToSlot('', idx)} className="absolute -top-1 -right-1 w-4 h-4 bg-red-600 text-white rounded-full flex items-center justify-center text-[8px] opacity-0 group-hover:opacity-100 transition-all z-10">
+                    <button onClick={() => assignToSlot('', idx)} className="absolute -top-1 -right-1 w-4 h-4 bg-red-600 text-white rounded-full flex items-center justify-center text-[8px] opacity-0 group-hover:opacity-100 z-10">
                       <i className="fas fa-times"></i>
                     </button>
                   )}
@@ -123,8 +136,8 @@ const ImageCreator: React.FC<ImageCreatorProps> = ({ state, setState, onAnimateR
             <textarea
               value={prompt}
               onChange={e => setState(prev => ({ ...prev, prompt: e.target.value }))}
-              placeholder="e.g. A cyberpunk nomad standing in neon rain..."
-              className="w-full bg-black/40 border border-white/5 rounded-2xl p-4 text-xs text-white focus:outline-none focus:border-indigo-500 h-40 resize-none leading-relaxed"
+              placeholder="Describe your vision..."
+              className="w-full bg-black/40 border border-white/5 rounded-2xl p-4 text-xs text-white h-40 resize-none leading-relaxed"
             />
           </div>
 
@@ -132,7 +145,7 @@ const ImageCreator: React.FC<ImageCreatorProps> = ({ state, setState, onAnimateR
             <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Dimensions</label>
             <div className="grid grid-cols-5 gap-1.5">
               {ratios.map(r => (
-                <button key={r} onClick={() => setState(prev => ({ ...prev, aspectRatio: r }))} className={`py-2 rounded-lg text-[8px] font-black border transition-all ${aspectRatio === r ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-white/5 border-white/5 text-gray-600 hover:bg-white/10'}`}>
+                <button key={r} onClick={() => setState(prev => ({ ...prev, aspectRatio: r }))} className={`py-2 rounded-lg text-[8px] font-black border transition-all ${aspectRatio === r ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-white/5 text-gray-600'}`}>
                   {r}
                 </button>
               ))}
@@ -142,19 +155,18 @@ const ImageCreator: React.FC<ImageCreatorProps> = ({ state, setState, onAnimateR
           <button
             onClick={handleGenerate}
             disabled={loading}
-            className={`w-full py-5 rounded-2xl font-black text-[11px] transition-all flex items-center justify-center space-x-2 uppercase tracking-[0.2em] mt-auto ${loading ? 'bg-gray-800 text-gray-600' : 'bg-indigo-600 text-white shadow-xl shadow-indigo-900/40 hover:scale-[1.02] active:scale-95'}`}
+            className={`w-full py-5 rounded-2xl font-black text-[11px] uppercase tracking-[0.2em] mt-auto transition-all ${loading ? 'bg-gray-800 text-gray-600' : 'bg-indigo-600 text-white hover:scale-[1.02]'}`}
           >
             {loading ? <i className="fas fa-spinner animate-spin"></i> : <i className="fas fa-wand-magic-sparkles"></i>}
-            <span>{loading ? 'Synthesizing...' : (image ? 'Regenerate Art' : 'Generate Art')}</span>
+            <span>{loading ? 'Synthesizing...' : 'Generate Art'}</span>
           </button>
         </div>
       </div>
 
-      {/* Main Canvas Column */}
       <div className="flex-1 glass rounded-[3rem] bg-black/40 flex flex-col overflow-hidden border-white/5 relative">
-        <div className="flex-1 flex items-center justify-center p-8 md:p-12 lg:p-16">
+        <div className="flex-1 flex items-center justify-center p-8">
           <div
-            className="relative shadow-[0_0_100px_rgba(79,70,229,0.15)] transition-all duration-700 ease-in-out bg-[#050505] flex items-center justify-center overflow-hidden border border-white/5"
+            className="relative bg-[#050505] flex items-center justify-center overflow-hidden border border-white/5"
             style={{
               aspectRatio: getCanvasAspectRatio(),
               maxHeight: '100%',
@@ -168,30 +180,17 @@ const ImageCreator: React.FC<ImageCreatorProps> = ({ state, setState, onAnimateR
                 <img src={image} className="w-full h-full object-contain" />
                 <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-all flex flex-col items-center justify-center gap-4">
                   <div className="flex gap-3">
-                    <button
-                      onClick={() => assignToSlot(image, subjectSlots.findIndex(s => s === null) !== -1 ? subjectSlots.findIndex(s => s === null) : 0)}
-                      className="w-12 h-12 rounded-full bg-indigo-600 text-white flex items-center justify-center shadow-2xl hover:scale-110 transition-transform"
-                      title="Add to Character Memory"
-                    >
+                    <button onClick={() => assignToSlot(image, subjectSlots.findIndex(s => s === null) !== -1 ? subjectSlots.findIndex(s => s === null) : 0)} className="w-12 h-12 rounded-full bg-indigo-600 text-white flex items-center justify-center hover:scale-110 transition-all">
                       <i className="fas fa-plus"></i>
                     </button>
-                    <button
-                      onClick={() => onAnimateRequest?.(image.split(',')[1])}
-                      className="px-6 py-3 rounded-full bg-blue-500 text-white text-[10px] font-black uppercase tracking-widest shadow-2xl hover:scale-110 transition-transform"
-                    >
+                    <button onClick={() => onAnimateRequest?.(image.split(',')[1])} className="px-6 py-3 rounded-full bg-blue-500 text-white text-[10px] font-black uppercase tracking-widest hover:scale-110 transition-all">
                       <i className="fas fa-film mr-2"></i> Animate
                     </button>
-                    <button
-                      onClick={handleDownload}
-                      className="w-12 h-12 rounded-full bg-white text-black flex items-center justify-center shadow-2xl hover:scale-110 transition-transform cursor-pointer"
-                      title={isLoggedIn ? 'Download' : 'Sign in to download'}
-                    >
+                    <button onClick={handleDownload} className="w-12 h-12 rounded-full bg-white text-black flex items-center justify-center hover:scale-110 transition-all cursor-pointer">
                       <i className={`fas ${isLoggedIn ? 'fa-download' : 'fa-lock'}`}></i>
                     </button>
                   </div>
-                  {!isLoggedIn && (
-                    <p className="text-[9px] text-gray-400 uppercase tracking-widest">Sign in to download</p>
-                  )}
+                  {!isLoggedIn && <p className="text-[9px] text-gray-400 uppercase tracking-widest">Sign in to download</p>}
                 </div>
               </div>
             ) : (
@@ -199,12 +198,11 @@ const ImageCreator: React.FC<ImageCreatorProps> = ({ state, setState, onAnimateR
                 {loading ? (
                   <div className="flex flex-col items-center gap-4">
                     <div className="w-16 h-16 rounded-full border-4 border-indigo-500/10 border-t-indigo-500 animate-spin"></div>
-                    <p className="text-[10px] font-black uppercase tracking-[0.3em] text-indigo-500 animate-pulse">Rendering 4K Inference</p>
+                    <p className="text-[10px] font-black uppercase tracking-[0.3em] text-indigo-500">Rendering Inference</p>
                   </div>
                 ) : (
                   <div className="opacity-5 flex flex-col items-center gap-6">
                     <i className="fas fa-palette text-8xl"></i>
-                    <p className="text-[10px] font-black uppercase tracking-[0.5em]">Studio Ready</p>
                   </div>
                 )}
               </div>
