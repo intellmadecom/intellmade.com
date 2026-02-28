@@ -70,8 +70,10 @@ const AppInner: React.FC = () => {
   const saved = loadWorkspace();
 
   const [currentTool, setCurrentTool] = useState<ToolType>(
-    (saved?.currentTool as ToolType) || ToolType.LANDING
-  );
+  (saved?.currentTool as ToolType) || 
+  (localStorage.getItem('last_tool') as ToolType) ||  // ✅ ADD THIS
+  ToolType.LANDING
+);
   const [hasApiKey,           setHasApiKey]           = useState(false);
   const [isSidebarVisible,    setIsSidebarVisible]    = useState(true);
   const [showLowCreditsUpgrade, setShowLowCreditsUpgrade] = useState(false);
@@ -116,13 +118,14 @@ const AppInner: React.FC = () => {
   };
 
   // Save currentTool changes too
-  const handleToolSelect = (tool: ToolType) => {
-    if (tool === ToolType.PRICING && currentTool !== ToolType.PRICING) {
-      sessionStorage.setItem('pre_stripe_tool', currentTool);
-    }
-    setCurrentTool(tool);
-    saveWorkspace({ currentTool: tool, imageCreator: imageCreatorState, animator: animatorState });
-  };
+ const handleToolSelect = (tool: ToolType) => {
+  if (tool === ToolType.PRICING && currentTool !== ToolType.PRICING) {
+    sessionStorage.setItem('pre_stripe_tool', currentTool);
+  }
+  setCurrentTool(tool);
+  localStorage.setItem('last_tool', tool);  // ✅ ADD THIS LINE
+  saveWorkspace({ currentTool: tool, imageCreator: imageCreatorState, animator: animatorState });
+};
 
   // ── Low credits popup ──────────────────────────────────────────────────────
   useEffect(() => {
