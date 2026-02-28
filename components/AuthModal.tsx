@@ -27,8 +27,9 @@ const AuthModal: React.FC = () => {
       setStatus('sending');
       setErrorMessage('');
 
-      // ✅ Save current page so we can return after magic link
-      localStorage.setItem('auth_return_url', window.location.href);
+      // ✅ Save current tool so we can return after magic link
+      const lastTool = localStorage.getItem('last_tool');
+      if (lastTool) localStorage.setItem('auth_return_tool', lastTool);
 
       const { error } = await supabase.auth.signInWithOtp({
         email: email.trim().toLowerCase(),

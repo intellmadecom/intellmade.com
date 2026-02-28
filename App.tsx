@@ -18,16 +18,13 @@ import Sidebar from './components/Sidebar';
 import AuthModal from './components/AuthModal';
 import { GeminiService } from './services/gemini';
 
-const SESSION_DURATION_MS = 3 * 60 * 60 * 1000; // 3 hours
-const SESSION_KEY         = 'intellmade_session_start';
-const STATE_KEY           = 'intellmade_workspace';   // ✅ persisted workspace
+const SESSION_DURATION_MS = 3 * 60 * 60 * 1000;
+const SESSION_KEY = 'intellmade_session_start';
+const STATE_KEY = 'intellmade_workspace';
 const LOW_CREDITS_THRESHOLD = 20;
 
-// ── Helpers ────────────────────────────────────────────────────────────────
 const saveWorkspace = (data: object) => {
-  try {
-    sessionStorage.setItem(STATE_KEY, JSON.stringify({ ...data, _savedAt: Date.now() }));
-  } catch { /* storage full — ignore */ }
+  try { sessionStorage.setItem(STATE_KEY, JSON.stringify({ ...data, _savedAt: Date.now() })); } catch {}
 };
 
 const loadWorkspace = () => {
@@ -35,73 +32,60 @@ const loadWorkspace = () => {
     const raw = sessionStorage.getItem(STATE_KEY);
     if (!raw) return null;
     const data = JSON.parse(raw);
-    // Discard if older than session duration
-    if (Date.now() - (data._savedAt || 0) > SESSION_DURATION_MS) {
-      sessionStorage.removeItem(STATE_KEY);
-      return null;
-    }
+    if (Date.now() - (data._savedAt || 0) > SESSION_DURATION_MS) { sessionStorage.removeItem(STATE_KEY); return null; }
     return data;
   } catch { return null; }
 };
 
-// ── Default states ─────────────────────────────────────────────────────────
 const defaultImageCreator = {
-  prompt: '',
-  image: null as string | null,
+  prompt: '', image: null as string | null,
   subjectSlots: [null, null, null, null, null] as (string | null)[],
   aspectRatio: '1:1',
 };
 
 const defaultAnimator = {
-  file: null as File | Blob | null,
-  preview: null as string | null,
-  bgFile: null as File | null,
-  bgPreview: null as string | null,
-  prompt: '',
-  aspectRatio: '16:9' as '16:9' | '9:16',
-  resultVideo: null as string | null,
+  file: null as File | Blob | null, preview: null as string | null,
+  bgFile: null as File | null, bgPreview: null as string | null,
+  prompt: '', aspectRatio: '16:9' as '16:9' | '9:16', resultVideo: null as string | null,
 };
 
-// ── AppInner ───────────────────────────────────────────────────────────────
 const AppInner: React.FC = () => {
   const { user, credits } = useAuth();
-
-  // ── Restore workspace from sessionStorage on mount (survives magic link redirect) ──
   const saved = loadWorkspace();
-  
 
-  const [currentTool, setCurrentTool] = useState<ToolType>(
-  (saved?.currentTool as ToolType) || 
-  (localStorage.getItem('last_tool') as ToolType) ||  // ✅ ADD THIS
-  ToolType.LANDING
-);
-  const [hasApiKey,           setHasApiKey]           = useState(false);
-  const [isSidebarVisible,    setIsSidebarVisible]    = useState(true);
+  // ✅ Restore last tool from localStorage (survives magic link new tab)
+  const getInitialTool = (): ToolType => {
+    if (saved?.currentTool) return saved.currentTool as ToolType;
+    const lastTool = localStorage.getItem('last_tool') as ToolType;
+    if (lastTool) return lastTool;
+    return ToolType.LANDING;
+  };
+
+  const [currentTool, setCurrentTool] = useState<ToolType>(getInitialTool);
+  const [hasApiKey, setHasApiKey] = useState(false);
+  const [isSidebarVisible, setIsSidebarVisible] = useState(true);
   const [showLowCreditsUpgrade, setShowLowCreditsUpgrade] = useState(false);
-  const [sessionWarning,      setSessionWarning]      = useState<'soon' | 'expired' | null>(null);
-  const [timeLeft,            setTimeLeft]            = useState('');
+  const [sessionWarning, setSessionWarning] = useState<'soon' | 'expired' | null>(null);
+  const [timeLeft, setTimeLeft] = useState('');
   const sessionTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // ── Restore image creator state (images survive page reload) ──────────────
   const [imageCreatorState, setImageCreatorStateRaw] = useState({
     ...defaultImageCreator,
-    prompt:       saved?.imageCreator?.prompt       ?? defaultImageCreator.prompt,
-    image:        saved?.imageCreator?.image        ?? defaultImageCreator.image,
+    prompt: saved?.imageCreator?.prompt ?? defaultImageCreator.prompt,
+    image: saved?.imageCreator?.image ?? defaultImageCreator.image,
     subjectSlots: saved?.imageCreator?.subjectSlots ?? defaultImageCreator.subjectSlots,
-    aspectRatio:  saved?.imageCreator?.aspectRatio  ?? defaultImageCreator.aspectRatio,
+    aspectRatio: saved?.imageCreator?.aspectRatio ?? defaultImageCreator.aspectRatio,
   });
 
-  // ── Animator can't restore File objects, but restores preview URLs ─────────
   const [animatorState, setAnimatorStateRaw] = useState({
     ...defaultAnimator,
-    preview:     saved?.animator?.preview     ?? defaultAnimator.preview,
-    bgPreview:   saved?.animator?.bgPreview   ?? defaultAnimator.bgPreview,
-    prompt:      saved?.animator?.prompt      ?? defaultAnimator.prompt,
+    preview: saved?.animator?.preview ?? defaultAnimator.preview,
+    bgPreview: saved?.animator?.bgPreview ?? defaultAnimator.bgPreview,
+    prompt: saved?.animator?.prompt ?? defaultAnimator.prompt,
     aspectRatio: saved?.animator?.aspectRatio ?? defaultAnimator.aspectRatio,
     resultVideo: saved?.animator?.resultVideo ?? defaultAnimator.resultVideo,
   });
 
-  // ── Wrap setters to auto-save to sessionStorage ────────────────────────────
   const setImageCreatorState: typeof setImageCreatorStateRaw = (update) => {
     setImageCreatorStateRaw(prev => {
       const next = typeof update === 'function' ? update(prev) : update;
@@ -118,41 +102,41 @@ const AppInner: React.FC = () => {
     });
   };
 
-  // Save currentTool changes too
- const handleToolSelect = (tool: ToolType) => {
-  if (tool === ToolType.PRICING && currentTool !== ToolType.PRICING) {
-    sessionStorage.setItem('pre_stripe_tool', currentTool);
-  }
-  setCurrentTool(tool);
-  localStorage.setItem('last_tool', tool);  // ✅ ADD THIS LINE
-  saveWorkspace({ currentTool: tool, imageCreator: imageCreatorState, animator: animatorState });
-};
+  const handleToolSelect = (tool: ToolType) => {
+    if (tool === ToolType.PRICING && currentTool !== ToolType.PRICING) {
+      sessionStorage.setItem('pre_stripe_tool', currentTool);
+    }
+    setCurrentTool(tool);
+    // ✅ Save to localStorage so magic link new tab can restore it
+    localStorage.setItem('last_tool', tool);
+    saveWorkspace({ currentTool: tool, imageCreator: imageCreatorState, animator: animatorState });
+  };
 
-  // ── Low credits popup ──────────────────────────────────────────────────────
+  // ✅ After magic link sign-in, restore the tool they were on
   useEffect(() => {
-    if (
-      user &&
-      credits !== null &&
-      credits <= LOW_CREDITS_THRESHOLD &&
-      credits > 0 &&
-      currentTool !== ToolType.PRICING
-    ) {
+    if (user) {
+      const returnTool = localStorage.getItem('auth_return_tool') as ToolType | null;
+      if (returnTool) {
+        localStorage.removeItem('auth_return_tool');
+        setCurrentTool(returnTool);
+        localStorage.setItem('last_tool', returnTool);
+      }
+    }
+  }, [user]);
+
+  // Low credits popup
+  useEffect(() => {
+    if (user && credits !== null && credits <= LOW_CREDITS_THRESHOLD && credits > 0 && currentTool !== ToolType.PRICING) {
       setShowLowCreditsUpgrade(true);
     }
   }, [credits, user]);
 
-  // ── Session timer (3 hrs) ──────────────────────────────────────────────────
   const startSessionTimer = () => {
-    if (!sessionStorage.getItem(SESSION_KEY)) {
-      sessionStorage.setItem(SESSION_KEY, Date.now().toString());
-    }
+    if (!sessionStorage.getItem(SESSION_KEY)) sessionStorage.setItem(SESSION_KEY, Date.now().toString());
     if (sessionTimerRef.current) clearInterval(sessionTimerRef.current);
-
     sessionTimerRef.current = setInterval(() => {
-      const start     = parseInt(sessionStorage.getItem(SESSION_KEY) || '0');
-      const elapsed   = Date.now() - start;
-      const remaining = SESSION_DURATION_MS - elapsed;
-
+      const start = parseInt(sessionStorage.getItem(SESSION_KEY) || '0');
+      const remaining = SESSION_DURATION_MS - (Date.now() - start);
       if (remaining <= 0) {
         setSessionWarning('expired');
         clearWorkspaceAndStorage();
@@ -182,45 +166,23 @@ const AppInner: React.FC = () => {
     startSessionTimer();
     return () => { if (sessionTimerRef.current) clearInterval(sessionTimerRef.current); };
   }, []);
-  // ✅ Restore last tool after magic link sign-in in new tab
-useEffect(() => {
-  if (user) {
-    const savedTool = localStorage.getItem('last_tool') as ToolType;
-    if (savedTool && savedTool !== ToolType.LANDING) {
-      setCurrentTool(savedTool);
-    }
-  }
-}, [user]);
 
-  // ── Stripe return ──────────────────────────────────────────────────────────
   const handleStripeReturn = () => {
     const searchParams = new URLSearchParams(window.location.search);
-    const hashParams   = new URLSearchParams(window.location.hash.split('?')[1] || '');
-    const payment      = searchParams.get('payment') || hashParams.get('payment');
-
+    const hashParams = new URLSearchParams(window.location.hash.split('?')[1] || '');
+    const payment = searchParams.get('payment') || hashParams.get('payment');
     if (payment === 'success' || payment === 'canceled') {
       setCurrentTool(ToolType.PRICING);
       window.history.replaceState({}, '', window.location.pathname);
       const savedTool = sessionStorage.getItem('pre_stripe_tool') as ToolType | null;
       if (savedTool) {
-        setTimeout(() => {
-          setCurrentTool(savedTool);
-          sessionStorage.removeItem('pre_stripe_tool');
-        }, 4000);
+        setTimeout(() => { setCurrentTool(savedTool); sessionStorage.removeItem('pre_stripe_tool'); }, 4000);
       }
     }
   };
 
-  const checkKey = async () => {
-    const status = await GeminiService.checkApiKey();
-    setHasApiKey(status);
-  };
-
-  const handleOpenKey = async () => {
-    await GeminiService.promptApiKey();
-    setHasApiKey(true);
-  };
-
+  const checkKey = async () => { const status = await GeminiService.checkApiKey(); setHasApiKey(status); };
+  const handleOpenKey = async () => { await GeminiService.promptApiKey(); setHasApiKey(true); };
   const toggleSidebar = () => setIsSidebarVisible(v => !v);
 
   const handleAnimateSharedImage = (base64: string) => {
@@ -236,7 +198,6 @@ useEffect(() => {
   return (
     <div className="flex min-h-screen bg-gray-950 overflow-hidden">
 
-      {/* ── Low credits upgrade overlay ── */}
       {showLowCreditsUpgrade && (
         <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="w-full max-w-5xl max-h-[90vh] overflow-y-auto rounded-[3rem] bg-gray-950 border border-white/10">
@@ -245,20 +206,11 @@ useEffect(() => {
         </div>
       )}
 
-      {/* ── Sidebar ── */}
       <div className={`fixed lg:sticky top-0 h-screen z-40 transition-transform duration-300 ease-in-out ${isSidebarVisible ? 'translate-x-0' : '-translate-x-full lg:hidden'}`}>
-        <Sidebar
-          active={currentTool}
-          onSelect={(tool) => {
-            handleToolSelect(tool);
-            if (window.innerWidth < 1024) setIsSidebarVisible(false);
-          }}
-        />
+        <Sidebar active={currentTool} onSelect={(tool) => { handleToolSelect(tool); if (window.innerWidth < 1024) setIsSidebarVisible(false); }} />
       </div>
 
       <div className="flex-1 flex flex-col min-w-0 h-screen overflow-hidden">
-
-        {/* ── Header ── */}
         <header className="sticky top-0 z-30 h-16 flex items-center justify-between glass border-b border-white/5 shrink-0 px-4 md:px-6">
           <div className="flex items-center gap-4">
             <button onClick={toggleSidebar} className="hover:bg-white/10 transition-colors text-gray-400 w-10 h-10 rounded-xl flex items-center justify-center z-50">
@@ -298,7 +250,6 @@ useEffect(() => {
               </button>
             )}
 
-            {/* ── Credits + email OR guest CTA ── */}
             {user ? (
               <div className="flex items-center gap-2">
                 <div
@@ -312,7 +263,7 @@ useEffect(() => {
                 >
                   <i className={`fas fa-bolt text-[9px] ${credits !== null && credits <= LOW_CREDITS_THRESHOLD ? 'text-red-400' : 'text-purple-400'}`}></i>
                   <span className={`text-[10px] font-black uppercase tracking-widest ${credits !== null && credits <= LOW_CREDITS_THRESHOLD ? 'text-red-300' : 'text-purple-300'}`}>
-                    {credits ?? 100} CR
+                    {credits ?? '···'} CR
                   </span>
                   {credits !== null && credits <= LOW_CREDITS_THRESHOLD && (
                     <span className="text-[8px] text-red-400 font-black ml-0.5">LOW</span>
@@ -325,7 +276,7 @@ useEffect(() => {
               </div>
             ) : (
               <button
-                onClick={() => handleToolSelect(ToolType.PRICING)}
+                onClick={() => { localStorage.setItem('auth_return_tool', currentTool); handleToolSelect(ToolType.PRICING); }}
                 className="flex items-center gap-2 bg-purple-500/10 border border-purple-500/30 px-3 py-1.5 rounded-xl text-[10px] font-black text-purple-300 uppercase tracking-widest hover:bg-purple-500/20 transition-all"
               >
                 <i className="fas fa-gift text-purple-400"></i>
@@ -335,7 +286,6 @@ useEffect(() => {
           </div>
         </header>
 
-        {/* ── Main content ── */}
         <main className={`flex-1 w-full internal-scroll ${currentTool === ToolType.GENERAL_INTEL ? 'overflow-hidden p-0' : 'overflow-y-auto max-w-7xl mx-auto p-4 md:p-6 pb-12'}`}>
 
           <div style={{ display: show(ToolType.LANDING) ? 'block' : 'none' }}>
@@ -349,11 +299,7 @@ useEffect(() => {
           {hasApiKey ? (
             <>
               <div style={{ display: show(ToolType.IMAGE_GEN) ? 'block' : 'none' }}>
-                <ImageCreator
-                  state={imageCreatorState}
-                  setState={setImageCreatorState}
-                  onAnimateRequest={handleAnimateSharedImage}
-                />
+                <ImageCreator state={imageCreatorState} setState={setImageCreatorState} onAnimateRequest={handleAnimateSharedImage} />
               </div>
               <div style={{ display: show(ToolType.ANIMATE_IMAGE) ? 'block' : 'none' }}>
                 <VeoImageAnimator state={animatorState} setState={setAnimatorState} />
