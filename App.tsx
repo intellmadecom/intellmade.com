@@ -68,6 +68,7 @@ const AppInner: React.FC = () => {
 
   // ── Restore workspace from sessionStorage on mount (survives magic link redirect) ──
   const saved = loadWorkspace();
+  
 
   const [currentTool, setCurrentTool] = useState<ToolType>(
   (saved?.currentTool as ToolType) || 
@@ -181,6 +182,15 @@ const AppInner: React.FC = () => {
     startSessionTimer();
     return () => { if (sessionTimerRef.current) clearInterval(sessionTimerRef.current); };
   }, []);
+  // ✅ Restore last tool after magic link sign-in in new tab
+useEffect(() => {
+  if (user) {
+    const savedTool = localStorage.getItem('last_tool') as ToolType;
+    if (savedTool && savedTool !== ToolType.LANDING) {
+      setCurrentTool(savedTool);
+    }
+  }
+}, [user]);
 
   // ── Stripe return ──────────────────────────────────────────────────────────
   const handleStripeReturn = () => {
