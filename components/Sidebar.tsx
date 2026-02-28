@@ -114,7 +114,7 @@ const Sidebar: React.FC<SidebarProps> = ({ active, onSelect }) => {
         ) : (
           /* Guest */
           <button
-            onClick={() => setShowAuthModal(true)}
+            onClick={() => setShowAuthModal(null)}
             className="w-full flex flex-col gap-1.5 px-3 py-3 rounded-xl bg-purple-500/5 border border-purple-500/15 hover:bg-purple-500/10 transition-all"
           >
             <div className="flex items-center justify-between">

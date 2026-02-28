@@ -34,7 +34,7 @@ const AuthModal: React.FC = () => {
       const { error } = await supabase.auth.signInWithOtp({
         email: email.trim().toLowerCase(),
         options: {
-          emailRedirectTo: 'https://intellmade.com',
+          emailRedirectTo:  window.location.origin,
         },
       });
 
