@@ -11,33 +11,38 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [credits, setCredits] = useState<number | null>(null);
 
-  // ✅ Create a communication channel between tabs
-  const authChannel = new BroadcastChannel('auth_channel');
+  // Communication channel to talk between tabs
+  const authChannel = new BroadcastChannel('intellmade_auth_sync');
 
   const fetchCredits = useCallback(async (userId: string) => {
-    try {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('credits_remaining')
-        .eq('id', userId)
-        .single();
-      if (error) throw error;
-      setCredits(data?.credits_remaining ?? 100);
-    } catch (err) {
-      console.error("Credits error:", err);
-      setCredits(100);
-    }
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('credits_remaining')
+      .eq('id', userId)
+      .single();
+    if (!error && data) setCredits(data.credits_remaining);
   }, []);
 
+  const deductCredit = useCallback(async () => {
+    if (!user || credits === null || credits <= 0) return false;
+    
+    const { error } = await supabase
+      .from('profiles')
+      .update({ credits_remaining: credits - 1 })
+      .eq('id', user.id);
+
+    if (!error) {
+      setCredits(prev => (prev !== null ? prev - 1 : 0));
+      return true;
+    }
+    return false;
+  }, [user, credits]);
+
   useEffect(() => {
-    // ✅ Listen for login events from other tabs (like the magic link tab)
-    authChannel.onmessage = (event) => {
-      if (event.data.type === 'LOGIN_SUCCESS') {
-        const { session: newSession } = event.data;
-        setSession(newSession);
-        setUser(newSession.user);
-        fetchCredits(newSession.user.id);
-        setShowAuthModal(false);
+    // Listen for login from the "New Tab"
+    authChannel.onmessage = (msg) => {
+      if (msg.data.type === 'AUTH_COMPLETE') {
+        window.location.reload(); // Refresh the original tab to catch the session
       }
     };
 
@@ -58,17 +63,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUser(s.user);
         await fetchCredits(s.user.id);
         setShowAuthModal(false);
-
-        // ✅ If this is the "New Tab" opened by the email, notify the "Old Tab"
-        authChannel.postMessage({ type: 'LOGIN_SUCCESS', session: s });
-
-        // ✅ If we have a pending download in THIS tab, keep it, 
-        // otherwise if it's just a verification tab, close it.
-        const hasData = !!localStorage.getItem('intellmade_has_state'); 
-        if (!hasData && window.name !== 'original_tab') {
-           // Optional: window.close(); // Browsers often block this, so redirecting is safer
-           // window.location.href = '/'; 
-        }
+        // Tell other tabs we are logged in
+        authChannel.postMessage({ type: 'AUTH_COMPLETE' });
       }
     });
 
@@ -78,23 +74,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   }, [fetchCredits]);
 
-  const requireAuth = (action?: string) => {
-    if (session) return true;
-    window.name = 'original_tab'; // Mark this tab
-    if (action) setPendingAction(action);
-    setShowAuthModal(true);
-    return false;
-  };
-
-  const signOut = async () => {
-    await supabase.auth.signOut();
-    setSession(null);
-    setUser(null);
-    setCredits(null);
-  };
-
   return (
-    <AuthContext.Provider value={{ user, session, credits, isLoggedIn: !!session, isLoading, showAuthModal, setShowAuthModal, pendingAction, setPendingAction, signOut, requireAuth }}>
+    <AuthContext.Provider value={{ 
+      user, session, credits, isLoggedIn: !!session, isLoading, 
+      showAuthModal, setShowAuthModal, deductCredit, fetchCredits 
+    }}>
       {children}
     </AuthContext.Provider>
   );
