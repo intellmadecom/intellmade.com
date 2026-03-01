@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ToolType } from './types';
-import { AuthProvider, useAuth } from './components/AuthContext';
-
+import { AuthProvider } from './context/AuthContext';
 import LandingPage from './components/LandingPage';
 import VeoImageAnimator from './components/VeoImageAnimator';
 import GeneralIntelligence from './components/GeneralIntelligence';

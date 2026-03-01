@@ -1,13 +1,13 @@
 ﻿import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { supabase } from '../services/supabaseClient';
 
-// ✅ CENTRAL PRICING CONFIG - Adjust these to your actual costs
+// ✅ CENTRAL PRICING CONFIG - Matches your specific requirements
 export const TOOL_COSTS = {
-  IMAGE_GEN: 1,      
-  VIDEO_GEN: 10,     // Video usually costs more
-  ANIMATE: 5,        
-  VOICE_CHAT: 1,     
-  ANALYSIS: 1        
+  IMAGE_GEN: 10,      
+  VIDEO_GEN: 45,     
+  ANIMATE: 45,        
+  VOICE_CHAT: 10,     
+  ANALYSIS: 10        
 };
 
 const AuthContext = createContext<any>(undefined);
@@ -19,22 +19,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [credits, setCredits] = useState<number | null>(null);
 
+  // ✅ Cross-tab synchronization channel
   const authChannel = new BroadcastChannel('intellmade_auth_sync');
 
   const fetchCredits = useCallback(async (email: string) => {
-    const { data, error } = await supabase
-      .from('user_credits')
-      .select('credits')
-      .eq('email', email)
-      .single();
-    
-    if (!error && data) {
-      setCredits(data.credits);
-    } else {
+    try {
+      const { data, error } = await supabase
+        .from('user_credits')
+        .select('credits')
+        .eq('email', email)
+        .single();
+      
+      if (!error && data) {
+        setCredits(data.credits);
+      } else {
+        // Fallback for new users without a row yet
+        setCredits(0);
+      }
+    } catch (err) {
+      console.error("Error fetching credits:", err);
       setCredits(0);
     }
   }, []);
 
+  // ✅ GLOBAL DEDUCTION FUNCTION - Call this in any tool component
   const deductCredit = useCallback(async (toolKey: keyof typeof TOOL_COSTS, description?: string) => {
     const amount = TOOL_COSTS[toolKey] || 1;
     
@@ -51,7 +59,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (error) throw error;
 
-      // 2. Log transaction
+      // 2. Log the transaction (matches your Edge Function logic)
       await supabase.from('credit_transactions').insert({
         email: user.email,
         amount: -amount,
@@ -59,7 +67,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         description: description || `Used ${toolKey}`
       });
 
-      setCredits(data.credits);
+      setCredits(data.credits); // Update Sidebar UI instantly
       return true;
     } catch (err) {
       console.error("Credit deduction failed:", err);
@@ -68,7 +76,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [user, credits]);
 
   useEffect(() => {
-    // Listen for login from the "New Tab" magic link
+    // ✅ Sync logic: If a new tab logs in, refresh this tab to pick up the session
     authChannel.onmessage = (msg) => {
       if (msg.data.type === 'AUTH_COMPLETE') {
         window.location.reload(); 
@@ -76,13 +84,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
 
     const init = async () => {
-      const { data: { session: s } } = await supabase.auth.getSession();
-      if (s) {
-        setSession(s);
-        setUser(s.user);
-        await fetchCredits(s.user.email!);
+      try {
+        const { data: { session: s } } = await supabase.auth.getSession();
+        if (s) {
+          setSession(s);
+          setUser(s.user);
+          await fetchCredits(s.user.email!);
+        }
+      } catch (err) {
+        console.error("Init session error:", err);
+      } finally {
+        setIsLoading(false);
       }
-      setIsLoading(false);
     };
     init();
 
@@ -92,6 +105,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUser(s.user);
         await fetchCredits(s.user.email!);
         setShowAuthModal(false);
+        // ✅ Tell other tabs that login is complete
         authChannel.postMessage({ type: 'AUTH_COMPLETE' });
       } else if (event === 'SIGNED_OUT') {
         setSession(null);
